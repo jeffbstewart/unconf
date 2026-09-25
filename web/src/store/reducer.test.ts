@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import type { Note, ServerFrame, Snapshot } from '../api/protocol';
+import type { BoardEvent, Note, ServerFrame, Snapshot } from '../api/protocol';
 import { applyFrame, initialBoard, votesRemaining, type BoardState } from './reducer';
 
 const note = (id: string, over: Partial<Note> = {}): Note => ({
@@ -13,6 +13,7 @@ const note = (id: string, over: Partial<Note> = {}): Note => ({
   regionId: null,
   voteTotal: 0,
   voted: false,
+  voters: [],
   starred: false,
   links: [],
   scheduled: false,
@@ -22,13 +23,12 @@ const note = (id: string, over: Partial<Note> = {}): Note => ({
 });
 
 const snapshot = (over: Partial<Snapshot> = {}): Snapshot => ({
-  event: { id: 'e', name: 'Camp', lifecycle: 'active', votingOpen: false, votesPerUser: 5 },
+  event: { id: 'e', name: 'Camp', lifecycle: 'active', votingOpen: false, votesPerUser: 5, scheduleThreshold: 2 },
   users: [{ id: 'u1', name: 'Ada', role: 'participant' }],
   notes: [note('n1')],
   regions: [],
   waves: [],
-  rooms: [],
-  assignments: [{ id: 'a1', noteId: 'n1', slotId: 's', roomId: 'r' }],
+  assignments: [{ id: 'a1', noteId: 'n1', slotId: 's', track: 1, meetUrl: null }],
   messages: { n1: [{ id: 'm1', authorId: 'u1', threadId: null, body: 'hi', createdAt: 't' }] },
   me: { votesRemaining: 5, votesUsed: 0 },
   ...over,
@@ -203,5 +203,61 @@ describe('voting', () => {
     expect(votesRemaining(s)).toBe(0);
     s = applyFrame(s, { type: 'event', seq: 14, event: { kind: 'votes_per_user_set', n: 3 } });
     expect(votesRemaining(s)).toBe(2);
+  });
+});
+
+describe('scheduling', () => {
+  const wave = { id: 'w', name: 'AM', status: 'planned' as const, opensAt: null, tracks: 2, slots: [] };
+  const slot = (id: string, startAt: string) => ({ id, startAt, endAt: startAt });
+  const ev = (seq: number, event: BoardEvent): ServerFrame => ({
+    type: 'event',
+    seq,
+    event,
+  });
+
+  it('builds waves, slots, and assignments, keeping note.scheduled in sync', () => {
+    let s = run(
+      [
+        ev(11, { kind: 'wave_created', wave }),
+        ev(12, { kind: 'slot_created', waveId: 'w', slot: slot('s2', '2026-10-01T11:00:00.000Z') }),
+        ev(13, { kind: 'slot_created', waveId: 'w', slot: slot('s1', '2026-10-01T10:00:00.000Z') }),
+        ev(14, { kind: 'wave_status_set', waveId: 'w', status: 'open' }),
+      ],
+      { ...loaded(), assignments: [] },
+    );
+    expect(s.waves[0].slots.map((x) => x.id)).toEqual(['s1', 's2']); // sorted by start
+    expect(s.waves[0].status).toBe('open');
+
+    s = applyFrame(s, ev(15, { kind: 'note_assigned', assignment: { id: 'a', noteId: 'n1', slotId: 's1', track: 1, meetUrl: null } }));
+    expect(s.notes.n1.scheduled).toBe(true);
+    s = applyFrame(s, ev(16, { kind: 'assignment_links_set', links: { a: 'https://meet.example/a' } }));
+    expect(s.assignments[0].meetUrl).toBe('https://meet.example/a');
+    s = applyFrame(s, ev(17, { kind: 'note_unassigned', assignmentId: 'a' }));
+    expect(s.notes.n1.scheduled).toBe(false);
+
+    s = applyFrame(s, ev(18, { kind: 'note_assigned', assignment: { id: 'b', noteId: 'n1', slotId: 's2', track: 2, meetUrl: null } }));
+    s = applyFrame(s, ev(19, { kind: 'slot_deleted', waveId: 'w', slotId: 's2' }));
+    expect(s.assignments).toEqual([]);
+    expect(s.notes.n1.scheduled).toBe(false);
+
+    s = applyFrame(s, ev(20, { kind: 'wave_updated', wave: { ...s.waves[0], tracks: 6 } }));
+    expect(s.waves[0].tracks).toBe(6);
+    s = applyFrame(s, ev(21, { kind: 'wave_deleted', waveId: 'w' }));
+    expect(s.waves).toEqual([]);
+  });
+
+  it('applies budget refunds and the threshold', () => {
+    let s = applyFrame(loaded(), ev(11, { kind: 'votes_used_set', votesUsed: 3 }));
+    expect(s.votesUsed).toBe(3);
+    s = applyFrame(s, ev(12, { kind: 'schedule_threshold_set', n: 4 }));
+    expect(s.event?.scheduleThreshold).toBe(4);
+  });
+
+  it('keeps note voters in step with vote events', () => {
+    let s = applyFrame(loaded(), ev(11, { kind: 'vote_cast', noteId: 'n1', byUserId: 'u2', total: 1 }));
+    s = applyFrame(s, ev(12, { kind: 'vote_cast', noteId: 'n1', byUserId: 'u1', total: 2 }));
+    expect(s.notes.n1.voters).toEqual(['u2', 'u1']);
+    s = applyFrame(s, ev(13, { kind: 'vote_retracted', noteId: 'n1', byUserId: 'u2', total: 1 }));
+    expect(s.notes.n1.voters).toEqual(['u1']);
   });
 });

@@ -13,6 +13,7 @@ const note = (id: string, over: Partial<Note> = {}): Note => ({
   regionId: null,
   voteTotal: 0,
   voted: false,
+  voters: [],
   starred: false,
   links: [],
   scheduled: false,

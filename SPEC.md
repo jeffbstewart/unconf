@@ -572,12 +572,12 @@ optimistic position to them.
   "event":   { "id","name","lifecycle","votingOpen","votesPerUser","scheduleThreshold" },
   "users":   [ {"id","name","role"} ],
   "notes":   [ {"id","title","bodyMd","authorId","x","y","color","regionId",
-                "voteTotal","voted","starred","hidden"?,"links":[...],"scheduled":bool} ],   // voteTotal = number of voters; voted = this user's vote
+                "voteTotal","voters":[userId],"voted","starred","hidden"?,"links":[...],"scheduled":bool} ],   // voteTotal = number of voters; voters = who (votes are public); voted = this user's vote
   "regions": [ {"id","label","x","y","w","h","color","z"} ],
   "waves":   [ {"id","name","status","opensAt","tracks","slots":[{"id","startAt","endAt"}]} ],
   "assignments": [ {"id","noteId","slotId","track","meetUrl"} ],
   "messages": { "<noteId>": [ {"id","authorId","threadId","body","hidden"?,"createdAt"} ] },
-  "me":      { "votesRemaining": n, "votesUsed": n }   // votesUsed per §4.1 (includes votes on notes hidden from this user only until M8's refund rule)
+  "me":      { "votesRemaining": n, "votesUsed": n }   // votesUsed per §4.1
 }
 ```
 
@@ -700,7 +700,8 @@ hidden rows entirely)`.
    Schedulers get the building view (§11 Scheduling); everyone else the
    attendee view.
 4. **Admin** (`#/admin`, tab in the top bar) — organizer: lifecycle, voting toggle + budget,
-   user roles. Moderator: hidden-items list (unhide from here), audit log.
+   **People** (make participants moderators — i.e. schedulers — and back).
+   Moderator: hidden-items list (unhide from here), audit log (M8).
 
 Top bar: event name, view tabs, connection indicator (green/amber during
 reconnect), votes remaining (when voting open), user name + role badge.
@@ -751,7 +752,8 @@ interstitial saying so; nothing is sent until they confirm (Cancel sends
 nothing). The acknowledgement is remembered per user in `localStorage`, so a
 new browser shows it once more. Retracting never triggers it.
 
-**Hidden notes free their votes** (implemented with moderation, M8): dots on
+**Hidden notes free their votes** (budget formula in place since M6; the
+hide/unhide commands and their `votes_used_set` pushes arrive with M8): votes on
 a hidden note stop counting against their voters' budgets while it is hidden.
 The dots themselves are kept, so unhiding restores them — which may leave a
 voter over budget, handled like a budget cut.

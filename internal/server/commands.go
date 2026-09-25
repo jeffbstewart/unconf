@@ -567,6 +567,9 @@ func (h *Hub) castVote(tx store.Tx, a domain.Actor, p noteIDPayload) (change, *d
 	if err := domain.AuthorizeVote(a, h.lifecycle, ev.VotingOpen, facts); err != nil {
 		return change{}, err
 	}
+	if cerr := h.checkNotHistory(tx, n.ID); cerr != nil {
+		return change{}, cerr
+	}
 	// One vote per person per note: voting again is a no-op (ack, no
 	// event), even for someone at their budget.
 	if voted, err := tx.HasVoted(h.ctx, a.UserID, n.ID); err != nil {
@@ -595,6 +598,9 @@ func (h *Hub) retractVote(tx store.Tx, a domain.Actor, p noteIDPayload) (change,
 	if err := domain.AuthorizeVote(a, h.lifecycle, ev.VotingOpen, facts); err != nil {
 		return change{}, err
 	}
+	if cerr := h.checkNotHistory(tx, n.ID); cerr != nil {
+		return change{}, cerr
+	}
 	removed, err := tx.RetractVote(h.ctx, a.UserID, n.ID)
 	if err != nil {
 		return change{}, internal(err)
@@ -603,6 +609,19 @@ func (h *Hub) retractVote(tx store.Tx, a domain.Actor, p noteIDPayload) (change,
 		return change{}, domain.BadRequest("you have not voted for this note")
 	}
 	return h.voteEvent(tx, "vote_retracted", a, n.ID)
+}
+
+// checkNotHistory rejects voting on a session already scheduled in a locked
+// or done wave: its votes are history (SPEC §4.1).
+func (h *Hub) checkNotHistory(tx store.Tx, noteID string) *domain.CmdError {
+	closed, err := tx.ScheduledInClosedWave(h.ctx, noteID)
+	if err != nil {
+		return internal(err)
+	}
+	if closed {
+		return domain.NotAllowedNow("this session is already scheduled; its votes can no longer change")
+	}
+	return nil
 }
 
 func (h *Hub) voteContext(tx store.Tx, a domain.Actor, noteID string) (store.Event, store.Note, domain.NoteFacts, *domain.CmdError) {
@@ -704,7 +723,7 @@ func (h *Hub) buildSnapshot(u store.User) (snapshotJSON, error) {
 	if err != nil {
 		return s, err
 	}
-	s.Event = eventJSON{ev.ID, ev.Name, ev.Lifecycle, ev.VotingOpen, ev.VotesPerUser}
+	s.Event = eventJSON{ev.ID, ev.Name, ev.Lifecycle, ev.VotingOpen, ev.VotesPerUser, ev.ScheduleThreshold}
 
 	users, err := st.Users(ctx, h.eventID)
 	if err != nil {
@@ -739,6 +758,10 @@ func (h *Hub) buildSnapshot(u store.User) (snapshotJSON, error) {
 	if err != nil {
 		return s, err
 	}
+	voters, err := st.EventVoters(ctx, h.eventID)
+	if err != nil {
+		return s, err
+	}
 	scheduled := map[string]bool{}
 	for _, a := range assignments {
 		scheduled[a.NoteID] = true
@@ -752,6 +775,9 @@ func (h *Hub) buildSnapshot(u store.User) (snapshotJSON, error) {
 		visible[n.ID] = true
 		j := toNoteJSON(n, links[n.ID])
 		j.VoteTotal, j.Voted, j.Starred, j.Scheduled = totals[n.ID], mine[n.ID], stars[n.ID], scheduled[n.ID]
+		if v := voters[n.ID]; v != nil {
+			j.Voters = v
+		}
 		s.Notes = append(s.Notes, j)
 	}
 	// Count every dot, including any on notes hidden from this user.
@@ -777,26 +803,13 @@ func (h *Hub) buildSnapshot(u store.User) (snapshotJSON, error) {
 	}
 	s.Waves = make([]waveJSON, 0, len(waves))
 	for _, w := range waves {
-		wj := waveJSON{ID: w.ID, Name: w.Name, Status: w.Status, OpensAt: optional(w.OpensAt), Slots: []slotJSON{}}
-		for _, sl := range w.Slots {
-			wj.Slots = append(wj.Slots, slotJSON{sl.ID, sl.StartAt, sl.EndAt})
-		}
-		s.Waves = append(s.Waves, wj)
-	}
-
-	rooms, err := st.Rooms(ctx, h.eventID)
-	if err != nil {
-		return s, err
-	}
-	s.Rooms = make([]roomJSON, 0, len(rooms))
-	for _, r := range rooms {
-		s.Rooms = append(s.Rooms, roomJSON{r.ID, r.Name, optional(r.MeetURL)})
+		s.Waves = append(s.Waves, toWaveJSON(w))
 	}
 
 	s.Assignments = make([]assignmentJSON, 0, len(assignments))
 	for _, a := range assignments {
 		if visible[a.NoteID] {
-			s.Assignments = append(s.Assignments, assignmentJSON{a.ID, a.NoteID, a.SlotID, a.RoomID})
+			s.Assignments = append(s.Assignments, toAssignmentJSON(a))
 		}
 	}
 

@@ -97,3 +97,28 @@ of them private or in another browser so each has its own cookie.
 5. A: **Close voting**. B's toggles and budget disappear, while the tallies
    stay. Change the budget and reopen: B's remaining count reflects the new
    budget.
+
+**Scheduling (milestone 6)**
+
+Open a third window (C) and log in as a new name.
+
+1. A (organizer): **Admin → People** and make C a *moderator*. Moderators
+   and organizers are the schedulers. With voting open, have B vote for a
+   few sessions.
+2. C: **Schedule → + New wave**, give it 6 tracks. Add a few 45-minute
+   slots, starting the first a few minutes in the past so "Happening now"
+   has something to show. Then **Open for scheduling**. B (Schedule tab)
+   sees the grid live, labelled *Draft*, but gets no editing controls.
+3. C: drag sessions from the **Unscheduled** rail into cells, or click one
+   and then click an empty cell. Put two sessions B voted for in the same
+   slot: C's slot shows *⚠ n conflicts*, hovering a card explains who
+   overlaps, and B sees *2 of your picks*. **Move** or drag one to another
+   slot and the conflict clears. Two sessions by the same proposer in one
+   slot are outlined red.
+4. C: **Lock & publish** (confirm). Every cell gets a **Join** link (fake
+   `meet.example` URLs from the Calendar stub; see the server log). B's
+   votes on those sessions come back (top bar), and their vote toggles
+   become plain tallies.
+5. B: **Happening now** lists the current slot's sessions with one-click
+   **Join**, and **Up next** shows the next slot.
+

@@ -35,7 +35,8 @@ type noteJSON struct {
 	Color     string        `json:"color"`
 	RegionID  *string       `json:"regionId"`
 	VoteTotal int           `json:"voteTotal"`
-	Voted     bool          `json:"voted"` // this user voted for it
+	Voters    []string      `json:"voters"` // user ids; votes are public (SPEC §11)
+	Voted     bool          `json:"voted"`  // this user voted for it
 	Starred   bool          `json:"starred"`
 	Hidden    bool          `json:"hidden,omitempty"`
 	Links     []domain.Link `json:"links"`
@@ -51,7 +52,7 @@ func toNoteJSON(n store.Note, links []domain.Link) noteJSON {
 	return noteJSON{
 		ID: n.ID, Title: n.Title, BodyMD: n.BodyMD, AuthorID: n.AuthorID,
 		X: n.X, Y: n.Y, Color: n.Color, RegionID: optional(n.RegionID),
-		Hidden: n.Hidden(), Links: links, CreatedAt: n.CreatedAt, UpdatedAt: n.UpdatedAt,
+		Hidden: n.Hidden(), Links: links, Voters: []string{}, CreatedAt: n.CreatedAt, UpdatedAt: n.UpdatedAt,
 	}
 }
 
@@ -63,11 +64,12 @@ func optional(s string) *string {
 }
 
 type eventJSON struct {
-	ID           string `json:"id"`
-	Name         string `json:"name"`
-	Lifecycle    string `json:"lifecycle"`
-	VotingOpen   bool   `json:"votingOpen"`
-	VotesPerUser int    `json:"votesPerUser"`
+	ID                string `json:"id"`
+	Name              string `json:"name"`
+	Lifecycle         string `json:"lifecycle"`
+	VotingOpen        bool   `json:"votingOpen"`
+	VotesPerUser      int    `json:"votesPerUser"`
+	ScheduleThreshold int    `json:"scheduleThreshold"`
 }
 
 type regionJSON struct {
@@ -92,20 +94,28 @@ type waveJSON struct {
 	Name    string     `json:"name"`
 	Status  string     `json:"status"`
 	OpensAt *string    `json:"opensAt"`
+	Tracks  int        `json:"tracks"`
 	Slots   []slotJSON `json:"slots"`
 }
 
-type roomJSON struct {
-	ID      string  `json:"id"`
-	Name    string  `json:"name"`
-	MeetURL *string `json:"meetUrl"`
+func toWaveJSON(w store.Wave) waveJSON {
+	j := waveJSON{ID: w.ID, Name: w.Name, Status: w.Status, OpensAt: optional(w.OpensAt), Tracks: w.Tracks, Slots: []slotJSON{}}
+	for _, sl := range w.Slots {
+		j.Slots = append(j.Slots, slotJSON{sl.ID, sl.StartAt, sl.EndAt})
+	}
+	return j
 }
 
 type assignmentJSON struct {
-	ID     string `json:"id"`
-	NoteID string `json:"noteId"`
-	SlotID string `json:"slotId"`
-	RoomID string `json:"roomId"`
+	ID      string  `json:"id"`
+	NoteID  string  `json:"noteId"`
+	SlotID  string  `json:"slotId"`
+	Track   int     `json:"track"`
+	MeetURL *string `json:"meetUrl"`
+}
+
+func toAssignmentJSON(a store.Assignment) assignmentJSON {
+	return assignmentJSON{a.ID, a.NoteID, a.SlotID, a.Track, optional(a.MeetURL)}
 }
 
 type messageJSON struct {
@@ -123,7 +133,6 @@ type snapshotJSON struct {
 	Notes       []noteJSON               `json:"notes"`
 	Regions     []regionJSON             `json:"regions"`
 	Waves       []waveJSON               `json:"waves"`
-	Rooms       []roomJSON               `json:"rooms"`
 	Assignments []assignmentJSON         `json:"assignments"`
 	Messages    map[string][]messageJSON `json:"messages"`
 	Me          struct {

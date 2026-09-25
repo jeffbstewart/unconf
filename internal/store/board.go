@@ -17,29 +17,6 @@ type Region struct {
 	Order              int64 // creation rank (rowid); breaks containment z ties
 }
 
-// Wave is one scheduling round with its slots.
-type Wave struct {
-	ID, EventID, Name, Status string
-	OpensAt                   string // "" = unset
-	Slots                     []Slot
-}
-
-// Slot is a time interval within a wave.
-type Slot struct {
-	ID, WaveID, StartAt, EndAt string
-}
-
-// Room is a virtual meeting room.
-type Room struct {
-	ID, EventID, Name string
-	MeetURL           string // "" = unset
-}
-
-// Assignment places a note at (slot, room).
-type Assignment struct {
-	ID, NoteID, SlotID, RoomID string
-}
-
 // Message is a chat message on a note.
 type Message struct {
 	ID, NoteID, AuthorID string
@@ -173,51 +150,6 @@ func (s Queries) UpdateRegion(ctx context.Context, r Region) error {
 // DeleteRegion removes a region. Notes tagged with it must be retagged first.
 func (s Queries) DeleteRegion(ctx context.Context, id string) error {
 	return s.execOne(ctx, "DELETE FROM regions WHERE id = ?", id)
-}
-
-// Waves lists an event's waves with their slots, in creation order.
-func (s Queries) Waves(ctx context.Context, eventID string) ([]Wave, error) {
-	waves, err := collect(ctx, s.db, func(r *sql.Rows) (Wave, error) {
-		var x Wave
-		return x, r.Scan(&x.ID, &x.EventID, &x.Name, &x.Status, &x.OpensAt)
-	}, "SELECT id, event_id, name, status, COALESCE(opens_at, '') FROM waves WHERE event_id = ? ORDER BY rowid", eventID)
-	if err != nil {
-		return nil, err
-	}
-	slots, err := collect(ctx, s.db, func(r *sql.Rows) (Slot, error) {
-		var x Slot
-		return x, r.Scan(&x.ID, &x.WaveID, &x.StartAt, &x.EndAt)
-	}, `SELECT s.id, s.wave_id, s.start_at, s.end_at FROM slots s JOIN waves w ON w.id = s.wave_id
-	    WHERE w.event_id = ? ORDER BY s.start_at, s.rowid`, eventID)
-	if err != nil {
-		return nil, err
-	}
-	idx := map[string]int{}
-	for i := range waves {
-		waves[i].Slots = []Slot{}
-		idx[waves[i].ID] = i
-	}
-	for _, sl := range slots {
-		waves[idx[sl.WaveID]].Slots = append(waves[idx[sl.WaveID]].Slots, sl)
-	}
-	return waves, nil
-}
-
-// Rooms lists an event's rooms.
-func (s Queries) Rooms(ctx context.Context, eventID string) ([]Room, error) {
-	return collect(ctx, s.db, func(r *sql.Rows) (Room, error) {
-		var x Room
-		return x, r.Scan(&x.ID, &x.EventID, &x.Name, &x.MeetURL)
-	}, "SELECT id, event_id, name, COALESCE(meet_url, '') FROM rooms WHERE event_id = ? ORDER BY rowid", eventID)
-}
-
-// Assignments lists an event's assignments.
-func (s Queries) Assignments(ctx context.Context, eventID string) ([]Assignment, error) {
-	return collect(ctx, s.db, func(r *sql.Rows) (Assignment, error) {
-		var x Assignment
-		return x, r.Scan(&x.ID, &x.NoteID, &x.SlotID, &x.RoomID)
-	}, `SELECT a.id, a.note_id, a.slot_id, a.room_id FROM assignments a
-	    JOIN notes n ON n.id = a.note_id WHERE n.event_id = ? ORDER BY a.rowid`, eventID)
 }
 
 // Messages lists an event's chat messages, oldest first.

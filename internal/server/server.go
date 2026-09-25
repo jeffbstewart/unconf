@@ -9,6 +9,7 @@ import (
 	"log"
 	"net/http"
 
+	"github.com/jeffbstewart/unconf/internal/integrations"
 	"github.com/jeffbstewart/unconf/internal/store"
 )
 
@@ -20,6 +21,8 @@ type Config struct {
 	SessionSecret []byte // HMAC key for session cookies
 	Static        fs.FS  // compiled frontend (web/dist)
 	RingSize      int    // events kept for reconnect replay; 0 = 10 000
+	// Calendar creates breakout meetings when a wave locks; nil = stub.
+	Calendar integrations.CalendarService
 }
 
 // Server is the root HTTP handler. It owns the realtime hub, which runs
@@ -35,7 +38,7 @@ type Server struct {
 // New builds the server and starts its hub.
 func New(cfg Config) (*Server, error) {
 	ctx, cancel := context.WithCancel(context.Background())
-	hub, err := newHub(ctx, cfg.Store, cfg.EventID, cfg.RingSize)
+	hub, err := newHub(ctx, cfg.Store, cfg.Calendar, cfg.EventID, cfg.RingSize)
 	if err != nil {
 		cancel()
 		return nil, err

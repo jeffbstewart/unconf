@@ -146,9 +146,6 @@ func TestSnapshotQueriesOnEmptyEvent(t *testing.T) {
 	if w, err := s.Waves(ctx, ev.ID); err != nil || len(w) != 0 {
 		t.Error(w, err)
 	}
-	if _, err := s.Rooms(ctx, ev.ID); err != nil {
-		t.Error(err)
-	}
 	if _, err := s.Assignments(ctx, ev.ID); err != nil {
 		t.Error(err)
 	}
