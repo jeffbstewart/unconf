@@ -18,6 +18,9 @@ system from it without access to prior discussion.
   horizontal scaling, CRDTs, or external message brokers.
 - **Deployment:** one static Go binary serving the API, WebSocket, and the
   embedded frontend. SQLite on local disk is the source of truth.
+- **Browsers:** Google Chrome (current stable) is the sole deployment target.
+  Development machines test with Safari, so the app must remain functional
+  there, but spend no effort on other browsers, legacy versions, or polyfills.
 - **Google Workspace:** the Google Sheet is a *mirror* of our data, never the
   primary store. All Google services are behind Go interfaces with local stub
   implementations in phase 1 (see §10). Google Calendar will eventually create
@@ -52,7 +55,8 @@ system from it without access to prior discussion.
 | **Slot** | A time interval (start/end) within a wave. |
 | **Room** | A named virtual meeting room (event-level; later carries a Google Meet link). |
 | **Assignment** | A note placed at (slot, room). |
-| **Personal filter** | A client-only view setting (dim/hide non-matching notes) that never affects other users. |
+| **Personal view settings** | Client-only settings — filters, sort order, snap-to-grid, camera — that never affect other users' rendering. |
+| **Star** | A personal bookmark on a note. Stored server-side (so it survives devices/reloads) but visible only to its owner; feeds personal filters and sorts. |
 
 ---
 
@@ -66,6 +70,7 @@ A higher role can do everything a lower role can.
 | Create notes; edit/delete **own** notes; add/remove links on own notes | ✔ | ✔ | ✔ |
 | Move any (unscheduled, unhidden) note on the board | ✔ | ✔ | ✔ |
 | Vote / retract votes while voting is open | ✔ | ✔ | ✔ |
+| Star/unstar any note (personal bookmark) | ✔ | ✔ | ✔ |
 | Post chat messages | ✔ | ✔ | ✔ |
 | Edit/delete **any** note; edit links on any note | | ✔ | ✔ |
 | Hide/unhide notes and chat messages | | ✔ | ✔ |
@@ -261,6 +266,12 @@ CREATE TABLE votes (
   cast_at  TEXT NOT NULL
 );          -- one row per dot; stacking allowed; budget enforced in domain code
 
+CREATE TABLE stars (
+  user_id TEXT NOT NULL REFERENCES users(id),
+  note_id TEXT NOT NULL REFERENCES notes(id) ON DELETE CASCADE,
+  PRIMARY KEY (user_id, note_id)
+);          -- personal bookmarks; never exposed to any other user
+
 CREATE TABLE waves (
   id       TEXT PRIMARY KEY,
   event_id TEXT NOT NULL REFERENCES events(id),
@@ -364,13 +375,14 @@ failures (voting closed, wave not open, lifecycle) → `not_allowed_now`.
 
 | cmd | payload | who / gating |
 |---|---|---|
-| `create_note` | `{title, bodyMd?, x, y, color?}` | any, lifecycle `active` (mods+ also during `setup`) |
+| `create_note` | `{title, bodyMd?, x, y, color?}` | any, lifecycle `active` (mods+ also during `setup`); position is overlap-resolved by the server (§9) |
 | `update_note` | `{noteId, title?, bodyMd?, color?}` | author or mods+ |
-| `move_note` | `{noteId, x, y}` | any; note must be unhidden; throttle: server coalesces to ≤ 20 moves/s per note |
+| `move_note` | `{noteId, x, y}` | any; note must be unhidden; requested position is overlap-resolved by the server (§9); throttle: server coalesces to ≤ 20 moves/s per note |
 | `delete_note` | `{noteId}` | author (only if note has 0 votes and 0 assignments), or mods+ always |
 | `set_links` | `{noteId, links: [{title,url,kind}]}` | author or mods+ (full replace) |
 | `cast_vote` | `{noteId}` | any, `voting_open`, budget remaining |
 | `retract_vote` | `{noteId}` | any, `voting_open`, has a vote there |
+| `star_note` / `unstar_note` | `{noteId}` | any; stars are personal — resulting events reach only the acting user's connections |
 | `post_message` | `{noteId, body, threadId?}` | any, lifecycle `active`; `threadId` must reference a root message on the same note |
 | `hide_message` / `unhide_message` | `{messageId}` | mods+ |
 | `hide_note` / `unhide_note` | `{noteId}` | mods+ |
@@ -397,6 +409,7 @@ bucket); `move_note` drags should be client-throttled to ~15 Hz. Frame size cap
 Event kinds mirror commands: `note_created`, `note_updated`, `note_moved`,
 `note_deleted`, `note_retagged {noteId, regionId|null}`, `links_set`,
 `vote_cast {noteId, byUserId, total}`, `vote_retracted {...}`,
+`note_starred` / `note_unstarred {noteId}` (personal, see below),
 `message_posted`, `region_created|updated|deleted`, `voting_set`,
 `votes_per_user_set`, `lifecycle_set`, `wave_*`, `slot_*`, `room_*`,
 `note_assigned`, `note_unassigned`, `role_set`, `user_joined`.
@@ -415,6 +428,15 @@ Moderation events are role-split at fan-out:
 Vote events carry the new per-note `total` so clients never count rows.
 `byUserId` lets a client update its own remaining budget.
 
+`note_starred` / `note_unstarred` are personal: they are delivered only to the
+acting user's own connections. Other clients simply see a seq gap (already
+required by role filtering), and no user's stars ever appear in another user's
+events or snapshots.
+
+`note_moved` always carries the server-resolved final coordinates (§9), which
+may differ from what the mover requested; the originating client snaps its
+optimistic position to them.
+
 ### 8.4 Snapshot shape
 
 ```jsonc
@@ -422,7 +444,7 @@ Vote events carry the new per-note `total` so clients never count rows.
   "event":   { "id","name","lifecycle","votingOpen","votesPerUser" },
   "users":   [ {"id","name","role"} ],
   "notes":   [ {"id","title","bodyMd","authorId","x","y","color","regionId",
-                "voteTotal","myVotes","hidden"?,"links":[...],"scheduled":bool} ],
+                "voteTotal","myVotes","starred","hidden"?,"links":[...],"scheduled":bool} ],
   "regions": [ {"id","label","x","y","w","h","color","z"} ],
   "waves":   [ {"id","name","status","opensAt","slots":[{"id","startAt","endAt"}]} ],
   "rooms":   [ {"id","name","meetUrl"} ],
@@ -434,7 +456,9 @@ Vote events carry the new per-note `total` so clients never count rows.
 
 ---
 
-## 9. Region containment (semantic tagging)
+## 9. Board geometry: containment and non-overlap
+
+### Region containment (semantic tagging)
 
 - A note belongs to the region whose rectangle contains the note's **center
   point** `(x + W/2, y + H/2)` where `W×H` is the fixed sticky size
@@ -446,6 +470,34 @@ Vote events carry the new per-note `total` so clients never count rows.
     of the event (≤ a few hundred; trivial).
 - Changes emit `note_retagged` events. `region_id` feeds personal filters,
   the grouped list view, and the spreadsheet export's "Region" column.
+
+### Sticky non-overlap
+
+Sticky notes never overlap. All stickies are 180×120 board units; the rule is
+server-authoritative and deterministic:
+
+- On `create_note` and `move_note`, if the requested rectangle intersects any
+  other **visible** note's rectangle, the server resolves to the nearest free
+  position: scan outward from the requested point in a square spiral with a
+  20-unit step; the first non-intersecting position wins. (A few hundred notes
+  → brute-force intersection checks are fine.)
+- The resulting `note_created` / `note_moved` event carries the resolved
+  coordinates; clients render the authoritative position (§8.3). During a drag
+  the client shows its optimistic ghost and snaps on the ack event.
+- **Hidden notes are ignored** for overlap (participants can't see them and
+  must not be able to infer them from blocked placement). On `unhide_note`,
+  the server re-resolves the unhidden note's own position if it now overlaps,
+  emitting a `note_moved` alongside the unhide.
+
+### Board extent, pan/zoom, snap-to-grid
+
+- The board is far larger than any viewport: coordinates are unbounded floats,
+  and every client views it through its own pan/zoom camera (§11). There is no
+  shared "edge"; the UI offers a "fit all notes" button to re-find content.
+- **Snap-to-grid** is a personal view setting: when enabled, the client
+  quantizes drag/create coordinates to a 20-unit grid *before* sending the
+  command. The server is grid-agnostic (overlap resolution's 20-unit spiral
+  step keeps resolved positions on-grid for grid users).
 
 ---
 
@@ -516,22 +568,30 @@ reconnect), votes remaining (when voting open), user name + role badge.
 
 ### Board
 
-- Pannable (drag background / wheel) and zoomable (ctrl-wheel / pinch,
-  0.25×–2×) surface; camera is client-local, persisted in `localStorage`.
+- The board surface is much larger than the browser viewport: pannable (drag
+  background / wheel) and zoomable (ctrl-wheel / pinch, 0.25×–2×), with a
+  "fit all notes" control. The camera is client-local, persisted in
+  `localStorage`.
 - **Region layer** under notes: tinted rects with header labels. Moderators get
   a "draw region" tool (drag to create) and move/resize/relabel handles.
 - **Stickies** (180×120): title + 2-line body snippet, color, vote-dot count
-  badge, chat-count badge, author initials, region tint strip. Drag to move
-  (optimistic; server event reconciles). Double-click/tap → **detail modal**:
-  full markdown body, links list (doc/slides icons), vote button (+/-),
-  chat thread panel, edit affordances per role, moderator hide button.
+  badge, chat-count badge, author initials, region tint strip, star toggle
+  (☆/★ on hover — personal). Drag to move (optimistic ghost; the server's
+  overlap-resolved `note_moved` reconciles, §9). Double-click/tap →
+  **detail modal**: full markdown body, links list (doc/slides icons), vote
+  button (+/-), star toggle, chat thread panel, edit affordances per role,
+  moderator hide button.
 - **Create**: double-click empty board or a "+ New session" button → inline
   title entry, then optional detail editing in the modal.
-- **Filter bar** (client-only): My stickies · My votes · Unscheduled ·
-  Region (multi-select) · text search. Toggle between *dim* (default,
-  non-matching at 25 % opacity) and *hide*. Filters never leave the client.
-- **List view** toggle: same data grouped by region, sortable by votes —
-  useful during voting and for accessibility.
+- **View bar** (client-only): filters — My stickies · My votes · Starred ·
+  Unscheduled · Region (multi-select) · text search — with a toggle between
+  *dim* (default, non-matching at 25 % opacity) and *hide*; a **sort** control
+  (used by the list view): Ranking (votes) · Newest · Authored by me first ·
+  Starred first; and a **snap-to-grid** toggle (§9). All of it is personal:
+  persisted in `localStorage`, never sent to the server (stars being the one
+  server-stored — but still private — piece).
+- **List view** toggle: same data grouped by region and ordered by the chosen
+  sort — useful during voting and for accessibility.
 
 ### Voting
 
@@ -583,15 +643,19 @@ Build in order; each milestone ends compiling, tested, and demoable.
 2. **Identity & roles** — login/logout/me, cookie HMAC, admin-key bootstrap,
    role middleware.
    ✓ Two browsers hold distinct identities; admin key yields organizer badge.
-3. **Board core** — WS hub (seq/ring/snapshot), note CRUD + move, detail modal
-   with markdown + links, SQLite persistence.
-   ✓ Two windows see each other's notes and drags live; server restart
+3. **Board core** — WS hub (seq/ring/snapshot), note CRUD + move with
+   server-side overlap resolution, pan/zoom camera over an
+   effectively-unbounded board, detail modal with markdown + links, SQLite
+   persistence.
+   ✓ Two windows see each other's notes and drags live; dropping a note onto
+   another nudges it to the nearest free spot in every window; server restart
    preserves the board; reconnect resyncs (kill server, restart, clients
    recover).
-4. **Regions & filters** — region draw/edit (mods), containment tagging,
-   filter bar, grouped list view.
-   ✓ Dragging a note into a region tags it (visible in list view); filters
-   change only the local window.
+4. **Regions & personal views** — region draw/edit (mods), containment
+   tagging, view bar (filters, sorts, snap-to-grid), stars, grouped list view.
+   ✓ Dragging a note into a region tags it (visible in list view); filters,
+   sort order, snap-to-grid, and stars affect only the local window/user;
+   list view orders by ranking / authored / starred as selected.
 5. **Voting** — voting toggle, budgets, live tallies, vote sort.
    ✓ Budget enforced server-side; totals update live in all windows; closed
    voting rejects with `not_allowed_now`.
@@ -618,9 +682,11 @@ Build in order; each milestone ends compiling, tested, and demoable.
 
 - **Go unit tests:** store CRUD + migrations; vote budget math; wave/lifecycle
   transition rules (incl. one-open-wave); region containment (z-order, ties,
-  region-edit retagging); command permission matrix (table-driven: every
-  command × every role); snapshot role-filtering (participant snapshot contains
-  no hidden items).
+  region-edit retagging); sticky non-overlap resolution (deterministic spiral,
+  hidden notes ignored, re-resolution on unhide); star privacy (star events
+  reach only the acting user; snapshots never carry another user's stars);
+  command permission matrix (table-driven: every command × every role);
+  snapshot role-filtering (participant snapshot contains no hidden items).
 - **Hub tests:** in-process WS clients (httptest server): connect two clients,
   apply commands, assert both receive ordered events; reconnect with
   `?since` inside and outside the ring buffer; role-split moderation fan-out.
