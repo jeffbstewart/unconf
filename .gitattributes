@@ -1,0 +1,3 @@
+# Schema fragments are hashed byte-for-byte (internal/store/schema); keep
+# their line endings identical on every checkout.
+internal/store/schema/*.sql text eol=lf
