@@ -34,11 +34,11 @@ func TestOpenAppliesShippedSchema(t *testing.T) {
 	if err != nil || len(applied) != len(frags) {
 		t.Fatalf("applied %d of %d fragments: %v", len(applied), len(frags), err)
 	}
-	// The §7 tables plus schema_version.
+	// The §7 tables (13, since rooms was dropped) plus schema_version.
 	var tables int
 	s.db.QueryRowContext(ctx, "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table'").Scan(&tables)
-	if tables != 15 {
-		t.Fatalf("tables=%d, want 15", tables)
+	if tables != 14 {
+		t.Fatalf("tables=%d, want 14", tables)
 	}
 	s.Close()
 

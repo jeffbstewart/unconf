@@ -1,6 +1,7 @@
 import type { Note } from '../api/protocol';
 import { votesRemaining } from '../store/reducer';
 import { canInteract, useStore } from '../store/store';
+import { inClosedWave } from '../schedule/logic';
 import { hasAcknowledged, useVoteNotice } from './voteNoticeState';
 
 interface Props {
@@ -20,7 +21,8 @@ export function VoteControl({ note, compact }: Props) {
   const you = useStore((s) => s.you);
   const send = useStore((s) => s.send);
   const askNotice = useVoteNotice((s) => s.ask);
-  const canVote = open && interactive && !note.hidden;
+  const history = useStore((s) => inClosedWave(note.id, s.waves, s.assignments));
+  const canVote = open && interactive && !note.hidden && !history;
 
   const count = `${note.voteTotal} vote${note.voteTotal === 1 ? '' : 's'}`;
   const classes = `votes${compact ? ' votes-compact' : ''}${note.voted ? ' votes-mine' : ''}`;
@@ -29,7 +31,10 @@ export function VoteControl({ note, compact }: Props) {
   if (!canVote) {
     if (note.voteTotal === 0 && !note.voted) return null;
     return (
-      <span className={classes} title={count + (note.voted ? ', including yours' : '')}>
+      <span
+        className={classes}
+        title={count + (note.voted ? ', including yours' : '') + (history ? ' (scheduled — votes are final)' : '')}
+      >
         <span className="vote-count">▲ {note.voteTotal}</span>
       </span>
     );

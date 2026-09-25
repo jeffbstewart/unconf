@@ -25,6 +25,7 @@ export function AdminPage() {
         </dl>
       </section>
       <VotingSettings />
+      <People />
     </main>
   );
 }
@@ -84,3 +85,47 @@ function VotingSettings() {
     </section>
   );
 }
+
+/** Roles: organizers make participants moderators (schedulers) and back. */
+function People() {
+  const users = useStore((s) => s.users);
+  const you = useStore((s) => s.you);
+  const send = useStore((s) => s.send);
+  const list = Object.values(users).sort(
+    (a, b) => ROLE_ORDER[a.role] - ROLE_ORDER[b.role] || a.name.localeCompare(b.name),
+  );
+  return (
+    <section className="admin-card">
+      <h2>People</h2>
+      <p className="muted">
+        Moderators schedule sessions, draw regions, and moderate content. Organizer access comes from the admin key.
+      </p>
+      <ul className="people">
+        {list.map((u) => (
+          <li key={u.id}>
+            <span className="people-name">
+              {u.name}
+              {u.id === you?.id && <span className="muted"> (you)</span>}
+            </span>
+            {u.role === 'organizer' ? (
+              <span className="role-badge role-organizer">organizer</span>
+            ) : (
+              <select
+                aria-label={`Role for ${u.name}`}
+                value={u.role}
+                onChange={(e) =>
+                  send('set_role', { userId: u.id, role: e.target.value as 'participant' | 'moderator' }).catch(() => {})
+                }
+              >
+                <option value="participant">participant</option>
+                <option value="moderator">moderator</option>
+              </select>
+            )}
+          </li>
+        ))}
+      </ul>
+    </section>
+  );
+}
+
+const ROLE_ORDER = { organizer: 0, moderator: 1, participant: 2 } as const;

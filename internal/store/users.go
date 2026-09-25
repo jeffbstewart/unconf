@@ -16,7 +16,9 @@ type Event struct {
 	Lifecycle    string
 	VotingOpen   bool
 	VotesPerUser int
-	CreatedAt    string
+	// ScheduleThreshold is the suggester's minimum voter count (SPEC §4.2).
+	ScheduleThreshold int
+	CreatedAt         string
 }
 
 // User is a participant identity within one event.
@@ -50,8 +52,8 @@ func (s Queries) EnsureDefaultEvent(ctx context.Context, name string) (Event, er
 func (s Queries) Event(ctx context.Context, id string) (Event, error) {
 	var e Event
 	err := s.db.QueryRowContext(ctx,
-		"SELECT id, name, lifecycle, voting_open, votes_per_user, created_at FROM events WHERE id = ?", id).
-		Scan(&e.ID, &e.Name, &e.Lifecycle, &e.VotingOpen, &e.VotesPerUser, &e.CreatedAt)
+		"SELECT id, name, lifecycle, voting_open, votes_per_user, schedule_threshold, created_at FROM events WHERE id = ?", id).
+		Scan(&e.ID, &e.Name, &e.Lifecycle, &e.VotingOpen, &e.VotesPerUser, &e.ScheduleThreshold, &e.CreatedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return Event{}, ErrNotFound
 	}
@@ -103,10 +105,15 @@ func (s Queries) SetUserEmail(ctx context.Context, id, email string) error {
 	return s.execOne(ctx, "UPDATE users SET email = ? WHERE id = ?", nullIfEmpty(email), id)
 }
 
-// VotesCast counts the votes a user has cast.
+// VotesCast counts the votes that count against a user's budget
+// (SPEC §4.1): those on notes that are not hidden and not assigned in a
+// locked or done wave.
 func (s Queries) VotesCast(ctx context.Context, userID string) (int, error) {
 	var n int
-	err := s.db.QueryRowContext(ctx, "SELECT COUNT(*) FROM votes WHERE user_id = ?", userID).Scan(&n)
+	err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM votes v JOIN notes n ON n.id = v.note_id
+		WHERE v.user_id = ? AND n.hidden_at IS NULL AND NOT EXISTS (
+			SELECT 1 FROM assignments a JOIN slots s ON s.id = a.slot_id JOIN waves w ON w.id = s.wave_id
+			WHERE a.note_id = n.id AND w.status IN ('locked', 'done'))`, userID).Scan(&n)
 	return n, err
 }
 

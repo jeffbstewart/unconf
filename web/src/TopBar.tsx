@@ -25,16 +25,19 @@ export function TopBar({ me, route, onLogout }: Props) {
     <header className="topbar">
       <span className="topbar-brand">{event?.name ?? 'unconf'}</span>
       {event && <LifecycleControl lifecycle={event.lifecycle} isOrganizer={isOrganizer} />}
-      {isOrganizer && (
-        <nav className="topbar-tabs" aria-label="Screens">
-          <a href={hrefFor('board')} aria-current={route === 'board' ? 'page' : undefined}>
-            Board
-          </a>
+      <nav className="topbar-tabs" aria-label="Screens">
+        <a href={hrefFor('board')} aria-current={route === 'board' ? 'page' : undefined}>
+          Board
+        </a>
+        <a href={hrefFor('schedule')} aria-current={route === 'schedule' ? 'page' : undefined}>
+          Schedule
+        </a>
+        {isOrganizer && (
           <a href={hrefFor('admin')} aria-current={route === 'admin' ? 'page' : undefined}>
             Admin
           </a>
-        </nav>
-      )}
+        )}
+      </nav>
       <span className="topbar-spacer" />
       {event?.votingOpen && event.lifecycle !== 'done' && (
         <span className="topbar-votes" title={`You have ${remaining} of ${event.votesPerUser} votes left`}>

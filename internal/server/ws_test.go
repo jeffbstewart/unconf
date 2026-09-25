@@ -150,6 +150,20 @@ func (w *wsClient) do(cmd string, payload any, kind string) frame {
 	return ev.event()
 }
 
+// sync discards everything queued for this client so far. It sends an
+// unknown command through the hub: the hub handles commands in order, so
+// its error reply comes after every frame published before it.
+func (w *wsClient) sync() {
+	w.t.Helper()
+	id := w.send("__sync__", map[string]any{})
+	for {
+		f := w.next()
+		if f.str("type") == "error" && f.str("cmdId") == id {
+			return
+		}
+	}
+}
+
 // fail sends a command and expects an error frame with code.
 func (w *wsClient) fail(cmd string, payload any, code string) string {
 	w.t.Helper()
@@ -199,7 +213,7 @@ func TestHelloAndSnapshot(t *testing.T) {
 	if ev["name"] != "Test Camp" || ev["lifecycle"] != "setup" {
 		t.Fatalf("event: %v", ev)
 	}
-	for _, key := range []string{"users", "notes", "regions", "waves", "rooms", "assignments", "messages", "me"} {
+	for _, key := range []string{"users", "notes", "regions", "waves", "assignments", "messages", "me"} {
 		if _, ok := state[key]; !ok {
 			t.Errorf("snapshot missing %q", key)
 		}

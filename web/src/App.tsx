@@ -5,6 +5,7 @@ import { AdminPage } from './admin/AdminPage';
 import { BoardPage } from './board/BoardPage';
 import { VoteNotice } from './board/VoteNotice';
 import { useRoute } from './route';
+import { SchedulePage } from './schedule/SchedulePage';
 import { useStore } from './store/store';
 import { Toasts } from './Toasts';
 import { TopBar } from './TopBar';
@@ -62,6 +63,7 @@ function Workspace({ me, onLoggedOut }: { me: Me; onLoggedOut: () => void }) {
   if (!ready) body = <p className="app-message">Connecting…</p>;
   else if (lifecycle === 'setup' && role === 'participant') body = <NotStarted />;
   else if (route === 'admin' && role === 'organizer') body = <AdminPage />;
+  else if (route === 'schedule') body = <SchedulePage />;
   else body = <BoardPage />;
 
   return (

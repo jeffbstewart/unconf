@@ -1,8 +1,9 @@
 # Unconf — Specification
 
 A web application for running a fully online unconference: a shared whiteboard of
-sticky notes proposing sessions, dot-voting, wave-based scheduling into time slots
-and virtual rooms, per-sticky chat, and moderation — with a Google Workspace
+sticky notes proposing sessions, voting, wave-based scheduling into time slots
+and parallel tracks (with a server-side schedule suggester), per-sticky chat,
+and moderation — with a Google Workspace
 integration layer (Sheets, Calendar, Drive, Chat, Gemini meeting notes) that is
 **stubbed in phase 1** and wired to real APIs later.
 
@@ -51,10 +52,13 @@ system from it without access to prior discussion.
 | **Event** | One unconference instance. |
 | **Note (sticky)** | A proposed session: a card on the board with a title, rich detail, links, votes, and a chat thread. |
 | **Region** | A moderator-drawn background rectangle with a color and header label (a full-width/height one acts as a swimlane). Regions are *semantic*: a note inside a region is tagged by it. |
-| **Wave** | One scheduling round: a set of time slots that organizers fill from the pool of top-voted unscheduled notes. |
+| **Wave** | One scheduling round: a set of time slots × a number of parallel tracks, filled from the pool of top-voted unscheduled notes. |
 | **Slot** | A time interval (start/end) within a wave. |
-| **Room** | A named virtual meeting room (event-level; later carries a Google Meet link). |
-| **Assignment** | A note placed at (slot, room). |
+| **Track** | One of a wave's numbered parallel lanes (1…T). The event is fully virtual, so tracks are just numbers — every scheduled session gets its own meeting (§10). |
+| **Cell** | A (slot, track) position in a wave's grid; holds at most one session. |
+| **Assignment** | A note placed in a cell. |
+| **Scheduler** | Anyone who builds schedules: moderators and organizers. |
+| **Interest** | Who wants to be in a session: its voters, plus its proposer (who facilitates it and so can't attend anything concurrent). |
 | **Personal view settings** | Client-only settings — filters, sort order, snap-to-grid, camera — that never affect other users' rendering. |
 | **Star** | A personal bookmark on a note. Stored server-side (so it survives devices/reloads) but visible only to its owner; feeds personal filters and sorts. |
 
@@ -77,7 +81,7 @@ A higher role can do everything a lower role can.
 | Create/edit/delete regions | | ✔ | ✔ |
 | See hidden items (flagged) and the audit log | | ✔ | ✔ |
 | Open/close voting; set votes-per-user | | | ✔ |
-| Manage waves, slots, rooms, assignments | | | ✔ |
+| Manage waves, slots, tracks, assignments; run the schedule suggester | | ✔ | ✔ |
 | Advance event lifecycle; promote/demote users (participant ↔ moderator) | | | ✔ |
 
 - The first organizer is bootstrapped by logging in with the admin key (§6).
@@ -93,7 +97,7 @@ A higher role can do everything a lower role can.
 `setup → active → done` (organizer advances; transitions are one-way).
 
 - **setup:** only organizers/moderators can interact (dress the board, draw
-  regions, define waves/rooms). Participants see a "not started" page.
+  regions, define waves). Participants see a "not started" page.
 - **active:** the working state for the whole multi-day/multi-wave period.
   Note creation, editing, chat are allowed throughout. Voting is gated by the
   independent event flag `voting_open` (organizer toggles it at will — e.g.
@@ -102,25 +106,82 @@ A higher role can do everything a lower role can.
 
 ### Wave state machine
 
-`planned → open → locked → done`, organizer-driven, one-way.
+`planned → open → locked → done`, scheduler-driven, one-way.
 
-- **planned:** wave and its slots exist and are visible (schedule preview);
-  no assignments yet.
-- **open:** organizers drag notes into the wave's slot×room grid. Assignments
-  are broadcast live.
+- **planned:** the wave, its slots, and its track count exist and are visible
+  (schedule preview); no assignments yet.
+- **open:** schedulers fill the wave's slot × track grid, by hand (drag) and/or
+  with the suggester (§4.2). Assignments are broadcast live, and everyone can
+  watch the grid take shape, labelled *Draft*.
 - **locked:** the schedule for this wave is final and published. *Integration
-  seam:* on lock, call `CalendarService.CreateBreakouts` (stub logs in phase 1;
-  later creates Calendar events with Meet rooms per assignment).
+  seam:* on lock, call `CalendarService.CreateBreakouts` (stub in phase 1;
+  later creates one Calendar event with its own Meet link per assignment).
+  The call runs **outside** the hub's transaction (it is network I/O); its
+  meet links come back as a follow-up `assignment_links_set` event.
 - **done:** the wave has run; its assignments are history.
 
 Multiple waves may exist in any mix of states, but at most **one wave may be
 `open` at a time** (server-enforced).
 
 A note is **scheduled** if it has any assignment. The **unscheduled pool** =
-visible notes with zero assignments, ranked by votes. Organizers may
+visible notes with zero assignments, ranked by voters. Schedulers may
 exceptionally assign an already-run note to a later wave (popular repeats);
 the UI shows a warning but the server allows it — at most one assignment per
 note per wave.
+
+### 4.1 Votes across waves
+
+Each person has **one vote per session** and a budget (default 5) of
+concurrent votes. A vote stops counting against the budget once it has "paid
+off" or can't:
+
+> `votesUsed` = the user's votes on notes that are **not hidden** (M8) and
+> **not assigned in a `locked` or `done` wave**.
+
+So when a wave locks, everyone who voted for its sessions gets those votes
+back for the next wave; the vote rows are kept as interest history. Votes on
+the *open* wave's draft still count (the draft can change). Voting for — or
+withdrawing a vote from — a note already scheduled in a locked/done wave is
+`not_allowed_now` (it's history). Whenever a user's `votesUsed` changes for a
+reason other than their own vote (lock, hide, unhide), the server sends them a
+personal `votes_used_set {votesUsed}` event.
+
+### 4.2 Schedule suggester
+
+`suggest_schedule {waveId}` (schedulers, wave `open`) fills the wave's
+**empty** cells. Cells already filled — by hand or by an earlier suggestion —
+are kept as-is ("pinned"). The result is ordinary `note_assigned` events;
+schedulers then adjust by hand and lock. It never locks on its own.
+
+1. **Eligible:** visible notes not assigned in this wave and not scheduled in
+   any locked/done wave, with **at least `scheduleThreshold` voters** (event
+   setting, default 2). (Repeats and below-threshold notes can still be
+   placed by hand.)
+2. **How many:** K = number of empty cells (e.g. 4 slots × 6 tracks = 24,
+   minus any pinned).
+3. **Which:** the top K eligible notes by voter count; ties → older first,
+   then id. The rest stay in the pool for a later wave.
+4. **Where:** place the K sessions into slots to minimize **conflicts**. For
+   a slot holding sessions S, a person *p* with interest in *k* of them
+   contributes *k − 1* conflicts (they can only be in one place). Interest =
+   voters ∪ {proposer}.
+   - **Hard constraint:** a proposer never has two of their own sessions in
+     one slot. Sessions that can't be placed without breaking it stay in the
+     pool (the ack reports how many).
+   - **Secondary:** balance slots — minimize the largest per-slot sum of
+     voters, so every slot offers good alternatives to people who use the
+     "law of two feet".
+   - **Method:** greedy placement in selection order (each session into the
+     slot with a free track that adds the fewest conflicts; ties → lighter
+     slot, then earlier slot), then local search: try moving a session to a
+     free cell or swapping two unpinned sessions across slots; apply any move
+     that strictly improves (conflicts, then balance); repeat until none
+     does (bounded iterations). Fully deterministic for a given input.
+   - **Tracks within a slot:** fill free track numbers in ascending order,
+     most-voted first. Track numbers carry no meaning beyond the grid.
+
+The same conflict computation powers the grid's conflict overlay (§11), so
+hand-built schedules get the same feedback.
 
 ---
 
@@ -216,6 +277,7 @@ CREATE TABLE events (
   lifecycle      TEXT NOT NULL DEFAULT 'setup',   -- setup|active|done
   voting_open    INTEGER NOT NULL DEFAULT 0,
   votes_per_user INTEGER NOT NULL DEFAULT 5,
+  schedule_threshold INTEGER NOT NULL DEFAULT 2,  -- min voters for the suggester (§4.2)
   created_at     TEXT NOT NULL
 );
 
@@ -281,7 +343,8 @@ CREATE TABLE waves (
   event_id TEXT NOT NULL REFERENCES events(id),
   name     TEXT NOT NULL,
   status   TEXT NOT NULL DEFAULT 'planned',        -- planned|open|locked|done
-  opens_at TEXT                                    -- informational display only
+  opens_at TEXT,                                   -- informational display only
+  tracks   INTEGER NOT NULL DEFAULT 1              -- parallel tracks, numbered 1..tracks
 );
 
 CREATE TABLE slots (
@@ -291,19 +354,13 @@ CREATE TABLE slots (
   end_at   TEXT NOT NULL
 );
 
-CREATE TABLE rooms (
-  id       TEXT PRIMARY KEY,
-  event_id TEXT NOT NULL REFERENCES events(id),
-  name     TEXT NOT NULL,
-  meet_url TEXT                                    -- filled by CalendarService later
-);
-
 CREATE TABLE assignments (
-  id      TEXT PRIMARY KEY,
-  note_id TEXT NOT NULL REFERENCES notes(id) ON DELETE CASCADE,
-  slot_id TEXT NOT NULL REFERENCES slots(id) ON DELETE CASCADE,
-  room_id TEXT NOT NULL REFERENCES rooms(id),
-  UNIQUE (slot_id, room_id)
+  id       TEXT PRIMARY KEY,
+  note_id  TEXT NOT NULL REFERENCES notes(id) ON DELETE CASCADE,
+  slot_id  TEXT NOT NULL REFERENCES slots(id) ON DELETE CASCADE,
+  track    INTEGER NOT NULL,                        -- 1..wave.tracks
+  meet_url TEXT,                                    -- set by CalendarService after lock
+  UNIQUE (slot_id, track)
 );          -- plus domain rule: at most one assignment per (note, wave)
 
 CREATE TABLE messages (
@@ -327,6 +384,11 @@ CREATE TABLE audit_log (
   at       TEXT NOT NULL
 );
 ```
+
+(The shipped fragments 001–006 created an event-level `rooms` table and
+room-based assignments; M6 adds a fragment that drops `rooms`, rebuilds
+`assignments` as above, and adds `waves.tracks` and
+`events.schedule_threshold`. No deployed data exists yet.)
 
 On first run the server creates a default event (`name` from env
 `UNCONF_EVENT_NAME`, default "Unconference") and stores its id in `meta`.
@@ -377,7 +439,7 @@ Endpoint: `GET /ws?since=<seq>` (cookie-authenticated). All frames are JSON text
 { "type": "hello",    "you": {"id","name","role"}, "eventSeq": 1234 }
 { "type": "snapshot", "seq": 1234, "state": { /* full visible state, §8.4 */ } }
 { "type": "event",    "seq": 1235, "event": { "kind": "...", ... } }
-{ "type": "ack",      "cmdId": "c-17", "seq": 1235 }          // command applied
+{ "type": "ack",      "cmdId": "c-17", "seq": 1235, "result"?: {…} }  // command applied; result only where §8.2 says
 { "type": "error",    "cmdId": "c-17", "code": "forbidden", "message": "..." }
 ```
 
@@ -440,12 +502,16 @@ failures (voting closed, wave not open, lifecycle) → `not_allowed_now`.
 | `set_voting` | `{open: bool}` | organizer, not once `done`; setting the current value is a no-op (ack, no event) |
 | `set_votes_per_user` | `{n}` (1–20) | organizer, not once `done`; lowering it keeps votes already cast (those users just can't add more) |
 | `set_lifecycle` | `{lifecycle}` | organizer, forward-only |
-| `create_wave` / `update_wave` | `{name, opensAt?}` / `{waveId, ...}` | organizer |
-| `set_wave_status` | `{waveId, status}` | organizer, forward-only, ≤ 1 wave `open` |
-| `create_slot` / `delete_slot` | `{waveId, startAt, endAt}` / `{slotId}` | organizer, wave `planned|open` |
-| `create_room` / `update_room` / `delete_room` | `{name}` / `{roomId, name?, meetUrl?}` / `{roomId}` | organizer; delete only if room has no assignments |
-| `assign_note` | `{noteId, slotId, roomId}` | organizer, wave `open`; replaces any existing assignment of that note **in that wave**; cell must be free |
-| `unassign_note` | `{assignmentId}` | organizer, wave `open` |
+| `create_wave` | `{name, tracks, opensAt?}` (tracks 1–20) | schedulers |
+| `update_wave` | `{waveId, name?, tracks?, opensAt?}` | schedulers; `tracks` only while `planned|open`, and not below a track in use |
+| `delete_wave` | `{waveId}` | schedulers, wave `planned` |
+| `set_wave_status` | `{waveId, status}` | schedulers, forward-only, ≤ 1 wave `open`; lock triggers §4 calendar seam and §4.1 refunds |
+| `create_slot` / `delete_slot` | `{waveId, startAt, endAt}` / `{slotId}` | schedulers, wave `planned|open`; `endAt > startAt`, no overlap with the wave's other slots; delete only if the slot is empty |
+| `assign_note` | `{noteId, slotId, track}` | schedulers, wave `open`, note visible; replaces any existing assignment of that note **in that wave**; cell must be free |
+| `unassign_note` | `{assignmentId}` | schedulers, wave `open` |
+| `clear_wave` | `{waveId}` | schedulers, wave `open`: removes all its assignments |
+| `suggest_schedule` | `{waveId}` | schedulers, wave `open`; fills empty cells (§4.2); ack carries `{placed, unplaced}` |
+| `set_schedule_threshold` | `{n}` (1–20) | schedulers |
 | `set_role` | `{userId, role}` | organizer; participant↔moderator only |
 
 Rate limiting: per connection, 20 commands/s sustained, burst 60 (token
@@ -464,8 +530,14 @@ Event kinds mirror commands: `note_created`, `note_updated`, `note_moved`,
 `vote_cast {noteId, byUserId, total}`, `vote_retracted {...}`,
 `note_starred` / `note_unstarred {noteId}` (personal, see below),
 `message_posted`, `region_created|updated|deleted`, `voting_set`,
-`votes_per_user_set`, `lifecycle_set`, `wave_*`, `slot_*`, `room_*`,
-`note_assigned`, `note_unassigned`, `role_set`, `user_joined`.
+`votes_per_user_set`, `lifecycle_set`, `wave_created|updated|deleted`,
+`wave_status_set`, `slot_created|deleted`, `note_assigned {assignment}`,
+`note_unassigned {assignmentId}`, `assignment_links_set {links: {assignmentId: meetUrl}}`,
+`schedule_threshold_set`, `votes_used_set {votesUsed}` (personal, §4.1),
+`role_set`, `user_joined`.
+
+A command normally answers with a bare `ack`; `suggest_schedule` is the one
+whose ack also carries a `result` (`{placed: n, unplaced: n}`).
 
 Moderation events are role-split at fan-out:
 
@@ -497,16 +569,15 @@ optimistic position to them.
 
 ```jsonc
 {
-  "event":   { "id","name","lifecycle","votingOpen","votesPerUser" },
+  "event":   { "id","name","lifecycle","votingOpen","votesPerUser","scheduleThreshold" },
   "users":   [ {"id","name","role"} ],
   "notes":   [ {"id","title","bodyMd","authorId","x","y","color","regionId",
-                "voteTotal","voted","starred","hidden"?,"links":[...],"scheduled":bool} ],   // voteTotal = number of voters; voted = this user's vote
+                "voteTotal","voters":[userId],"voted","starred","hidden"?,"links":[...],"scheduled":bool} ],   // voteTotal = number of voters; voters = who (votes are public); voted = this user's vote
   "regions": [ {"id","label","x","y","w","h","color","z"} ],
-  "waves":   [ {"id","name","status","opensAt","slots":[{"id","startAt","endAt"}]} ],
-  "rooms":   [ {"id","name","meetUrl"} ],
-  "assignments": [ {"id","noteId","slotId","roomId"} ],
+  "waves":   [ {"id","name","status","opensAt","tracks","slots":[{"id","startAt","endAt"}]} ],
+  "assignments": [ {"id","noteId","slotId","track","meetUrl"} ],
   "messages": { "<noteId>": [ {"id","authorId","threadId","body","hidden"?,"createdAt"} ] },
-  "me":      { "votesRemaining": n, "votesUsed": n }   // votesUsed counts every vote, incl. on notes hidden from this user
+  "me":      { "votesRemaining": n, "votesUsed": n }   // votesUsed per §4.1
 }
 ```
 
@@ -578,12 +649,18 @@ type SheetMirror interface {
 // bytes are served at GET /api/export.{json,csv}. Real impl: Sheets API,
 // one tab "Sessions", one tab per wave "Schedule — <wave>".
 
-type Breakout struct { NoteID, Title, Room string; Start, End time.Time; Attendees []string }
+type Breakout struct {
+    AssignmentID, NoteID, Title string
+    Track      int
+    Start, End time.Time
+    Attendees  []string // emails of the proposer and voters who gave one
+}
 type CalendarService interface {
-    // Called when a wave is locked. Returns per-note meet links to store on rooms/assignments.
+    // Called (outside the hub transaction) when a wave is locked. Returns a
+    // meet link per assignment id, stored on the assignment.
     CreateBreakouts(ctx context.Context, waveName string, b []Breakout) (map[string]string, error)
 }
-// Stub: logs and returns fake meet URLs ("https://meet.example/<noteID>").
+// Stub: logs and returns fake meet URLs ("https://meet.example/<assignmentID>").
 
 type DriveService interface {
     // Later: create a notes doc per scheduled session, return its URL.
@@ -607,7 +684,7 @@ type MeetingNotesService interface {
 ```
 
 Export CSV columns (Sessions tab): `id, title, author, region, votes, status
-(unscheduled|scheduled|done), wave, slot_start, slot_end, room, links
+(unscheduled|scheduled|done), wave, slot_start, slot_end, track, meet_url, links
 (semicolon-joined), hidden (mods-only export includes it; public export omits
 hidden rows entirely)`.
 
@@ -619,10 +696,12 @@ hidden rows entirely)`.
 
 1. **Login** — name (+ optional email, optional admin key under a disclosure).
 2. **Board** (default) — the whiteboard.
-3. **Schedule** — per-wave slot×room grids; organizers get the editing view
-   with the unscheduled pool; everyone else a read-only published view.
-4. **Admin** (`#/admin`, tab in the top bar) — organizer: lifecycle, voting toggle + budget, waves/slots/rooms,
-   user roles. Moderator: hidden-items list (unhide from here), audit log.
+3. **Schedule** (`#/schedule`, everyone) — per-wave slot × track grids.
+   Schedulers get the building view (§11 Scheduling); everyone else the
+   attendee view.
+4. **Admin** (`#/admin`, tab in the top bar) — organizer: lifecycle, voting toggle + budget,
+   **People** (make participants moderators — i.e. schedulers — and back).
+   Moderator: hidden-items list (unhide from here), audit log (M8).
 
 Top bar: event name, view tabs, connection indicator (green/amber during
 reconnect), votes remaining (when voting open), user name + role badge.
@@ -673,18 +752,49 @@ interstitial saying so; nothing is sent until they confirm (Cancel sends
 nothing). The acknowledgement is remembered per user in `localStorage`, so a
 new browser shows it once more. Retracting never triggers it.
 
-**Hidden notes free their votes** (implemented with moderation, M8): dots on
+**Hidden notes free their votes** (budget formula in place since M6; the
+hide/unhide commands and their `votes_used_set` pushes arrive with M8): votes on
 a hidden note stop counting against their voters' budgets while it is hidden.
 The dots themselves are kept, so unhiding restores them — which may leave a
 voter over budget, handled like a budget cut.
 
-### Scheduling (organizer, wave `open`)
+### Schedule screen
 
-Left rail: unscheduled pool sorted by votes (drag source). Grid: columns =
-rooms, rows = wave's slots. Drag a note into a cell → `assign_note`; drag out →
-unassign; occupied cells reject drops. "Lock wave" button with confirm →
-`set_wave_status`. Locked/done waves render read-only with meet links when
-present.
+Wave tabs across the top (in creation order, with status badges); each wave
+is a grid with **rows = slots** (times in the viewer's local time zone) and
+**columns = Track 1…T**. A cell shows the session title (opens the detail
+modal), proposer, `▲ voters`, the star toggle, and — once the wave is locked
+— a **Join** link to its meeting. An open wave is shown to everyone, live,
+labelled *Draft — may change*.
+
+**Attendee view** (everyone) — built for choosing where to be, and for the
+"law of two feet" (leave a session that isn't working for you, join another):
+- **Happening now / Up next**: a strip above the grid with the current slot's
+  sessions (by the viewer's clock) and their Join links, so switching rooms
+  is one click; the next slot is previewed below it.
+- **Your picks**: cells you voted for, proposed, or starred are highlighted
+  (distinct markers), and your own sessions are labelled *You're
+  facilitating*.
+- **Your conflicts**: a slot holding two or more of your picks gets a notice
+  ("2 of your picks at 10:30"). If one is your own session, the notice says
+  you'll be facilitating it.
+
+**Scheduler view** (moderators and organizers):
+- **Wave setup** (planned/open): name, number of tracks, add/remove slots
+  (start/end pickers; slots are usually chosen first, then the track count).
+  Advance status: Open → Lock (confirm) → Done.
+- **Pool rail**: unscheduled sessions sorted by voters; those at or above
+  `scheduleThreshold` first, the rest collapsed below a divider. Repeats
+  (already run) are listed separately with a warning.
+- **Grid editing**: drag from the pool into an empty cell → `assign_note`;
+  drag between cells to move; drag back to the pool → `unassign_note`;
+  occupied cells reject drops. **Suggest schedule** fills the empty cells
+  (§4.2) and reports "placed 24, 6 didn't fit"; **Clear** empties the wave.
+- **Conflict overlay**: each slot row shows its conflict count; hovering a
+  cell shows the sessions in the same slot that share interest with it
+  ("3 people also want *X*"), and a proposer double-booking is flagged red.
+  The same numbers the suggester optimizes.
+- Locked/done waves render read-only with Join links.
 
 ### Realtime & errors
 
@@ -738,10 +848,25 @@ Build in order; each milestone ends compiling, tested, and demoable.
 5. **Voting** — voting toggle, budgets, live tallies, vote sort.
    ✓ Budget enforced server-side; totals update live in all windows; closed
    voting rejects with `not_allowed_now`.
-6. **Waves & scheduling** — wave/slot/room CRUD, one-open-wave rule,
-   assignment grid, lock/publish.
-   ✓ Organizer schedules top-voted notes; participants see the published grid;
-   locking calls the Calendar stub (visible in logs/fake meet links).
+6. **Waves & scheduling** — schema move from rooms to numbered tracks;
+   wave/slot CRUD with track counts (schedulers = moderators + organizers),
+   one-open-wave rule, the drag-and-drop grid with pool and conflict overlay,
+   lock/publish with the Calendar stub run outside the transaction and meet
+   links as a follow-up event, vote refunds on lock (§4.1), and the Schedule
+   screen's attendee view (happening now / up next, your picks, your
+   conflicts).
+   ✓ A moderator sets up a wave (4 slots × 6 tracks), drags top-voted notes
+   in while participants watch the draft live; the overlay counts conflicts;
+   locking shows Join links (fake meet URLs) and gives voters of the
+   scheduled sessions their votes back; a participant's schedule view shows
+   what's happening now with one-click Join links and flags their conflicts.
+
+   **6b. Schedule suggester** (its own PR, after 6) — `suggest_schedule`
+   (§4.2) and the `scheduleThreshold` setting.
+   ✓ With 30 eligible sessions and 24 empty cells, it places the 24 most-voted
+   and leaves 6 in the pool; it never double-books a proposer; pinned cells
+   are untouched; on a crafted input with a known conflict-free arrangement it
+   finds zero conflicts; the same input always yields the same schedule.
 7. **Chat** — thread panel, realtime, thread-shaped storage.
    ✓ Messages appear live in the other window's modal; replies nest under
    roots; counts on stickies update.
@@ -759,7 +884,10 @@ Build in order; each milestone ends compiling, tested, and demoable.
 
 ## 14. Testing & verification
 
-- **Go unit tests:** store CRUD; schema evolution (fresh apply, idempotent
+- **Go unit tests:** scheduling — conflict metric, suggester (selection
+  order, threshold, proposer constraint, pinned cells, determinism, known
+  optimum on crafted inputs), slot validation, vote refunds on lock;
+  store CRUD; schema evolution (fresh apply, idempotent
   restart, new fragments, refusal on edited/renamed/missing fragments,
   rollback of a failing fragment, file-name validation); vote budget math; wave/lifecycle
   transition rules (incl. one-open-wave); region containment (z-order, ties,
@@ -785,5 +913,5 @@ Build in order; each milestone ends compiling, tested, and demoable.
 - Real Sheets/Calendar/Drive/Chat/Gemini implementations of §10 interfaces.
 - Google Chat sub-thread mirroring using `messages.thread_id`.
 - Multi-event UI on the already event-scoped schema.
-- Room capacity hints, attendance tracking ("I'll attend" RSVPs feeding
-  Calendar invites).
+- Track/meeting capacity hints; attendance tracking ("I'll attend" RSVPs
+  feeding Calendar invites and the suggester's interest sets).

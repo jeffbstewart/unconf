@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/jeffbstewart/unconf/internal/domain"
+	"github.com/jeffbstewart/unconf/internal/integrations"
 	"github.com/jeffbstewart/unconf/internal/store"
 )
 
@@ -97,11 +98,12 @@ type pendingMove struct {
 
 // Hub serializes all state changes.
 type Hub struct {
-	st      *store.Store
-	eventID string
-	ctx     context.Context
-	ops     chan func()
-	done    chan struct{}
+	st       *store.Store
+	calendar integrations.CalendarService
+	eventID  string
+	ctx      context.Context
+	ops      chan func()
+	done     chan struct{}
 
 	// Owned by the hub goroutine.
 	seq       int64
@@ -114,12 +116,15 @@ type Hub struct {
 	pending   map[string]*pendingMove
 }
 
-func newHub(ctx context.Context, st *store.Store, eventID string, ringSize int) (*Hub, error) {
+func newHub(ctx context.Context, st *store.Store, cal integrations.CalendarService, eventID string, ringSize int) (*Hub, error) {
 	if ringSize <= 0 {
 		ringSize = defaultRingSize
 	}
+	if cal == nil {
+		cal = integrations.StubCalendar{}
+	}
 	h := &Hub{
-		st: st, eventID: eventID, ctx: ctx,
+		st: st, calendar: cal, eventID: eventID, ctx: ctx,
 		ops:      make(chan func(), 256),
 		done:     make(chan struct{}),
 		ring:     newRing(ringSize),

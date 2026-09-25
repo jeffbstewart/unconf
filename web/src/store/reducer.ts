@@ -1,7 +1,7 @@
 // Pure state transitions for server frames. The server is authoritative:
 // shared state changes only here, in response to snapshot/event frames.
 
-import type { Assignment, BoardEvent, EventInfo, Message, Note, Region, Room, ServerFrame, User, Wave } from '../api/protocol';
+import type { Assignment, BoardEvent, EventInfo, Message, Note, Region, ServerFrame, User, Wave } from '../api/protocol';
 
 export interface BoardState {
   /** The logged-in user, from the hello frame. */
@@ -15,7 +15,6 @@ export interface BoardState {
   notes: Record<string, Note>;
   regions: Region[];
   waves: Wave[];
-  rooms: Room[];
   assignments: Assignment[];
   messages: Record<string, Message[]>;
   /** Vote dots this user has placed (see votesRemaining). */
@@ -31,7 +30,6 @@ export const initialBoard: BoardState = {
   notes: {},
   regions: [],
   waves: [],
-  rooms: [],
   assignments: [],
   messages: {},
   votesUsed: 0,
@@ -62,7 +60,6 @@ export function applyFrame(s: BoardState, f: ServerFrame): BoardState {
         notes: byId(st.notes),
         regions: st.regions,
         waves: st.waves,
-        rooms: st.rooms,
         assignments: st.assignments,
         messages: st.messages,
         votesUsed: st.me.votesUsed,
@@ -75,6 +72,18 @@ export function applyFrame(s: BoardState, f: ServerFrame): BoardState {
     default:
       return s;
   }
+}
+
+/** Re-derives notes' `scheduled` flag (has any assignment) after assignments change. */
+function withAssignments(s: BoardState, assignments: Assignment[], noteIds: string[]): BoardState {
+  let notes = s.notes;
+  for (const id of noteIds) {
+    const n = notes[id];
+    if (!n) continue;
+    const scheduled = assignments.some((a) => a.noteId === id);
+    if (scheduled !== n.scheduled) notes = { ...notes, [id]: { ...n, scheduled } };
+  }
+  return { ...s, notes, assignments };
 }
 
 function patchNote(s: BoardState, id: string, patch: Partial<Note>): BoardState {
@@ -134,18 +143,75 @@ export function applyEvent(s: BoardState, e: BoardEvent): BoardState {
     case 'vote_retracted': {
       const n = s.notes[e.noteId];
       if (!n) return s;
-      if (e.byUserId !== s.you?.id) return patchNote(s, e.noteId, { voteTotal: e.total });
-      const voted = e.kind === 'vote_cast';
-      const changed = voted !== n.voted;
+      const cast = e.kind === 'vote_cast';
+      const voters = cast
+        ? n.voters.includes(e.byUserId)
+          ? n.voters
+          : [...n.voters, e.byUserId]
+        : n.voters.filter((v) => v !== e.byUserId);
+      if (e.byUserId !== s.you?.id) return patchNote(s, e.noteId, { voteTotal: e.total, voters });
+      const changed = cast !== n.voted;
       return {
-        ...patchNote(s, e.noteId, { voteTotal: e.total, voted }),
-        votesUsed: changed ? s.votesUsed + (voted ? 1 : -1) : s.votesUsed,
+        ...patchNote(s, e.noteId, { voteTotal: e.total, voted: cast, voters }),
+        votesUsed: changed ? s.votesUsed + (cast ? 1 : -1) : s.votesUsed,
       };
     }
     case 'voting_set':
       return s.event ? { ...s, event: { ...s.event, votingOpen: e.open } } : s;
     case 'votes_per_user_set':
       return s.event ? { ...s, event: { ...s.event, votesPerUser: e.n } } : s;
+    case 'votes_used_set':
+      return { ...s, votesUsed: e.votesUsed };
+    case 'schedule_threshold_set':
+      return s.event ? { ...s, event: { ...s.event, scheduleThreshold: e.n } } : s;
+    case 'wave_created':
+      return { ...s, waves: [...s.waves.filter((w) => w.id !== e.wave.id), e.wave] };
+    case 'wave_updated':
+      return { ...s, waves: s.waves.map((w) => (w.id === e.wave.id ? e.wave : w)) };
+    case 'wave_deleted': {
+      const gone = new Set(s.waves.find((w) => w.id === e.waveId)?.slots.map((sl) => sl.id));
+      const removed = s.assignments.filter((a) => gone.has(a.slotId));
+      return withAssignments(
+        { ...s, waves: s.waves.filter((w) => w.id !== e.waveId) },
+        s.assignments.filter((a) => !gone.has(a.slotId)),
+        removed.map((a) => a.noteId),
+      );
+    }
+    case 'wave_status_set':
+      return { ...s, waves: s.waves.map((w) => (w.id === e.waveId ? { ...w, status: e.status } : w)) };
+    case 'slot_created':
+      return {
+        ...s,
+        waves: s.waves.map((w) =>
+          w.id === e.waveId
+            ? { ...w, slots: [...w.slots.filter((sl) => sl.id !== e.slot.id), e.slot].sort((a, b) => a.startAt.localeCompare(b.startAt)) }
+            : w,
+        ),
+      };
+    case 'slot_deleted': {
+      const removed = s.assignments.filter((a) => a.slotId === e.slotId);
+      return withAssignments(
+        { ...s, waves: s.waves.map((w) => (w.id === e.waveId ? { ...w, slots: w.slots.filter((sl) => sl.id !== e.slotId) } : w)) },
+        s.assignments.filter((a) => a.slotId !== e.slotId),
+        removed.map((a) => a.noteId),
+      );
+    }
+    case 'note_assigned':
+      return withAssignments(
+        s,
+        [...s.assignments.filter((a) => a.id !== e.assignment.id), e.assignment],
+        [e.assignment.noteId],
+      );
+    case 'note_unassigned': {
+      const a = s.assignments.find((x) => x.id === e.assignmentId);
+      if (!a) return s;
+      return withAssignments(s, s.assignments.filter((x) => x.id !== e.assignmentId), [a.noteId]);
+    }
+    case 'assignment_links_set':
+      return {
+        ...s,
+        assignments: s.assignments.map((a) => (e.links[a.id] ? { ...a, meetUrl: e.links[a.id] } : a)),
+      };
     default:
       return s; // kinds from later milestones
   }

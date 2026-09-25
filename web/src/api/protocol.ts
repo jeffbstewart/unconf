@@ -37,6 +37,8 @@ export interface Note {
   color: NoteColor;
   regionId: string | null;
   voteTotal: number;
+  /** Ids of the users who voted for it (votes are public). */
+  voters: string[];
   /** Whether this user voted for it (one vote per person per note). */
   voted: boolean;
   starred: boolean;
@@ -53,6 +55,8 @@ export interface EventInfo {
   lifecycle: Lifecycle;
   votingOpen: boolean;
   votesPerUser: number;
+  /** Minimum voters for the schedule suggester (SPEC §4.2). */
+  scheduleThreshold: number;
 }
 
 export interface Region {
@@ -72,25 +76,25 @@ export interface Slot {
   endAt: string;
 }
 
+export type WaveStatus = 'planned' | 'open' | 'locked' | 'done';
+
 export interface Wave {
   id: string;
   name: string;
-  status: 'planned' | 'open' | 'locked' | 'done';
+  status: WaveStatus;
   opensAt: string | null;
+  /** Parallel tracks, numbered 1..tracks. */
+  tracks: number;
   slots: Slot[];
-}
-
-export interface Room {
-  id: string;
-  name: string;
-  meetUrl: string | null;
 }
 
 export interface Assignment {
   id: string;
   noteId: string;
   slotId: string;
-  roomId: string;
+  track: number;
+  /** Set once the wave is locked and its meetings exist. */
+  meetUrl: string | null;
 }
 
 export interface Message {
@@ -108,7 +112,6 @@ export interface Snapshot {
   notes: Note[];
   regions: Region[];
   waves: Wave[];
-  rooms: Room[];
   assignments: Assignment[];
   messages: Record<string, Message[]>;
   me: { votesRemaining: number; votesUsed: number };
@@ -133,7 +136,18 @@ export type BoardEvent =
   | { kind: 'vote_cast'; noteId: string; byUserId: string; total: number }
   | { kind: 'vote_retracted'; noteId: string; byUserId: string; total: number }
   | { kind: 'voting_set'; open: boolean }
-  | { kind: 'votes_per_user_set'; n: number };
+  | { kind: 'votes_per_user_set'; n: number }
+  | { kind: 'votes_used_set'; votesUsed: number }
+  | { kind: 'wave_created'; wave: Wave }
+  | { kind: 'wave_updated'; wave: Wave }
+  | { kind: 'wave_deleted'; waveId: string }
+  | { kind: 'wave_status_set'; waveId: string; status: WaveStatus }
+  | { kind: 'slot_created'; waveId: string; slot: Slot }
+  | { kind: 'slot_deleted'; waveId: string; slotId: string }
+  | { kind: 'note_assigned'; assignment: Assignment }
+  | { kind: 'note_unassigned'; assignmentId: string }
+  | { kind: 'assignment_links_set'; links: Record<string, string> }
+  | { kind: 'schedule_threshold_set'; n: number };
 
 export type ServerFrame =
   | { type: 'hello'; you: User; eventSeq: number }
@@ -171,5 +185,16 @@ export interface Commands {
   retract_vote: { noteId: string };
   set_voting: { open: boolean };
   set_votes_per_user: { n: number };
+  create_wave: { name: string; tracks: number; opensAt?: string };
+  update_wave: { waveId: string; name?: string; tracks?: number; opensAt?: string };
+  delete_wave: { waveId: string };
+  set_wave_status: { waveId: string; status: WaveStatus };
+  create_slot: { waveId: string; startAt: string; endAt: string };
+  delete_slot: { slotId: string };
+  assign_note: { noteId: string; slotId: string; track: number };
+  unassign_note: { assignmentId: string };
+  clear_wave: { waveId: string };
+  set_schedule_threshold: { n: number };
+  set_role: { userId: string; role: 'participant' | 'moderator' };
 }
 export type CommandName = keyof Commands;
