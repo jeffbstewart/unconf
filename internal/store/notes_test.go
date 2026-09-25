@@ -154,3 +154,57 @@ func TestSnapshotQueriesOnEmptyEvent(t *testing.T) {
 		t.Error(u, err)
 	}
 }
+
+func TestRegionsAndStars(t *testing.T) {
+	ctx := context.Background()
+	s, _ := openTemp(t)
+	ev, _ := s.EnsureDefaultEvent(ctx, "E")
+	a, err := s.InsertRegion(ctx, Region{ID: "ra", EventID: ev.ID, Label: "A", X: 0, Y: 0, W: 400, H: 300, Color: "#aabbcc"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, _ := s.InsertRegion(ctx, Region{ID: "rb", EventID: ev.ID, Label: "B", X: 0, Y: 0, W: 400, H: 300, Color: "#aabbcc", Z: 2})
+	if !(b.Order > a.Order) {
+		t.Fatalf("creation order not increasing: %d, %d", a.Order, b.Order)
+	}
+	a.Label, a.W = "A2", 500
+	if err := s.UpdateRegion(ctx, a); err != nil {
+		t.Fatal(err)
+	}
+	got, _ := s.RegionByID(ctx, "ra")
+	if got != a {
+		t.Fatalf("round trip: %+v vs %+v", got, a)
+	}
+	if all, _ := s.Regions(ctx, ev.ID); len(all) != 2 || all[0].ID != "ra" {
+		t.Fatalf("Regions: %+v", all)
+	}
+
+	u := seedUser(t, s, ev.ID, "Ada")
+	n := Note{ID: "n", EventID: ev.ID, AuthorID: u.ID, Title: "T", Color: "yellow", CreatedAt: "t", UpdatedAt: "t"}
+	s.InsertNote(ctx, n)
+	if err := s.SetNoteRegion(ctx, "n", "ra"); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := s.NoteByID(ctx, "n"); got.RegionID != "ra" {
+		t.Fatalf("tag: %q", got.RegionID)
+	}
+	// A tagged note blocks region deletion until retagged (foreign key).
+	if err := s.DeleteRegion(ctx, "ra"); err == nil {
+		t.Fatal("deleting a region still referenced by a note should fail")
+	}
+	s.SetNoteRegion(ctx, "n", "")
+	if err := s.DeleteRegion(ctx, "ra"); err != nil {
+		t.Fatal(err)
+	}
+
+	for i, want := range []bool{true, false} {
+		if changed, err := s.StarNote(ctx, u.ID, "n"); err != nil || changed != want {
+			t.Fatalf("star #%d: %v %v", i+1, changed, err)
+		}
+	}
+	for i, want := range []bool{true, false} {
+		if changed, err := s.UnstarNote(ctx, u.ID, "n"); err != nil || changed != want {
+			t.Fatalf("unstar #%d: %v %v", i+1, changed, err)
+		}
+	}
+}

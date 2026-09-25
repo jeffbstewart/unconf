@@ -8,6 +8,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"sort"
 	"time"
 
 	"github.com/jeffbstewart/unconf/internal/domain"
@@ -24,6 +25,11 @@ var commandHandlers = map[string]commandHandler{
 	"delete_note":   decoded((*Hub).deleteNote),
 	"set_links":     decoded((*Hub).setLinks),
 	"set_lifecycle": decoded((*Hub).setLifecycle),
+	"create_region": decoded((*Hub).createRegion),
+	"update_region": decoded((*Hub).updateRegion),
+	"delete_region": decoded((*Hub).deleteRegion),
+	"star_note":     decoded((*Hub).starNote),
+	"unstar_note":   decoded((*Hub).unstarNote),
 }
 
 // decoded adapts a handler taking a typed payload.
@@ -139,6 +145,7 @@ func (h *Hub) createNote(tx store.Tx, a domain.Actor, p createNotePayload) (chan
 	n := store.Note{
 		ID: domain.NewID(), EventID: h.eventID, AuthorID: a.UserID,
 		Title: title, BodyMD: p.BodyMD, X: x, Y: y, Color: color,
+		RegionID:  domain.RegionFor(x, y, h.regionShapes()),
 		CreatedAt: now, UpdatedAt: now,
 	}
 	if err := tx.InsertNote(h.ctx, n); err != nil {
@@ -146,7 +153,7 @@ func (h *Hub) createNote(tx store.Tx, a domain.Actor, p createNotePayload) (chan
 	}
 	return change{
 		events: []eventSpec{toAll(E{"kind": "note_created", "note": toNoteJSON(n, nil)})},
-		after:  func() { h.geo[n.ID] = &noteGeo{x: x, y: y} },
+		after:  func() { h.geo[n.ID] = &noteGeo{x: x, y: y, regionID: n.RegionID} },
 	}, nil
 }
 
@@ -217,9 +224,20 @@ func (h *Hub) moveNote(tx store.Tx, a domain.Actor, p movePayload) (change, *dom
 	if err := tx.MoveNote(h.ctx, n.ID, x, y); err != nil {
 		return change{}, internal(err)
 	}
+	events := []eventSpec{toAll(E{"kind": "note_moved", "noteId": n.ID, "x": x, "y": y, "byUserId": a.UserID})}
+	region := domain.RegionFor(x, y, h.regionShapes())
+	if region != n.RegionID {
+		if err := tx.SetNoteRegion(h.ctx, n.ID, region); err != nil {
+			return change{}, internal(err)
+		}
+		events = append(events, toAll(retaggedEvent(n.ID, region)))
+	}
 	return change{
-		events: []eventSpec{toAll(E{"kind": "note_moved", "noteId": n.ID, "x": x, "y": y, "byUserId": a.UserID})},
-		after:  func() { h.geo[n.ID].x, h.geo[n.ID].y = x, y },
+		events: events,
+		after: func() {
+			g := h.geo[n.ID]
+			g.x, g.y, g.regionID = x, y, region
+		},
 	}, nil
 }
 
@@ -294,6 +312,249 @@ func (h *Hub) setLifecycle(tx store.Tx, a domain.Actor, p setLifecyclePayload) (
 		events: []eventSpec{toAll(E{"kind": "lifecycle_set", "lifecycle": p.Lifecycle})},
 		after:  func() { h.lifecycle = p.Lifecycle },
 	}, nil
+}
+
+func regionShape(r store.Region) domain.RegionShape {
+	return domain.RegionShape{ID: r.ID, X: r.X, Y: r.Y, W: r.W, H: r.H, Z: r.Z, Order: r.Order}
+}
+
+func toRegionJSON(r store.Region) regionJSON {
+	return regionJSON{r.ID, r.Label, r.X, r.Y, r.W, r.H, r.Color, r.Z}
+}
+
+func retaggedEvent(noteID, regionID string) E {
+	return E{"kind": "note_retagged", "noteId": noteID, "regionId": optional(regionID)}
+}
+
+// regionShapes returns the cached regions, optionally with one replaced
+// (upsert) or removed (drop), as they will be after a pending change.
+func (h *Hub) regionShapes(edits ...func(map[string]domain.RegionShape)) []domain.RegionShape {
+	m := h.regions
+	if len(edits) > 0 {
+		m = make(map[string]domain.RegionShape, len(h.regions)+1)
+		for k, v := range h.regions {
+			m[k] = v
+		}
+		for _, e := range edits {
+			e(m)
+		}
+	}
+	out := make([]domain.RegionShape, 0, len(m))
+	for _, r := range m {
+		out = append(out, r)
+	}
+	return out
+}
+
+// retagAll recomputes every note's region against shapes, persists the
+// changes, and returns their events plus a cache update. Hidden notes are
+// retagged too, but only moderators hear about it.
+func (h *Hub) retagAll(tx store.Tx, shapes []domain.RegionShape) ([]eventSpec, func(), *domain.CmdError) {
+	var events []eventSpec
+	changed := map[string]string{}
+	for id, g := range h.geo {
+		r := domain.RegionFor(g.x, g.y, shapes)
+		if r == g.regionID {
+			continue
+		}
+		if err := tx.SetNoteRegion(h.ctx, id, r); err != nil {
+			return nil, nil, internal(err)
+		}
+		changed[id] = r
+		events = append(events, audience(g.hidden, retaggedEvent(id, r)))
+	}
+	sort.Slice(events, func(i, j int) bool { // deterministic event order
+		return events[i].mod["noteId"].(string) < events[j].mod["noteId"].(string)
+	})
+	return events, func() {
+		for id, r := range changed {
+			h.geo[id].regionID = r
+		}
+	}, nil
+}
+
+type createRegionPayload struct {
+	Label string   `json:"label"`
+	X     *float64 `json:"x"`
+	Y     *float64 `json:"y"`
+	W     *float64 `json:"w"`
+	H     *float64 `json:"h"`
+	Color string   `json:"color"`
+	Z     int      `json:"z"`
+}
+
+func (h *Hub) createRegion(tx store.Tx, a domain.Actor, p createRegionPayload) (change, *domain.CmdError) {
+	if err := domain.AuthorizeRegionEdit(a, h.lifecycle); err != nil {
+		return change{}, err
+	}
+	if p.X == nil || p.Y == nil || p.W == nil || p.H == nil {
+		return change{}, domain.BadRequest("x, y, w, and h are required")
+	}
+	r := store.Region{ID: domain.NewID(), EventID: h.eventID, X: *p.X, Y: *p.Y, W: *p.W, H: *p.H, Color: p.Color, Z: p.Z}
+	if err := validateRegion(&r, p.Label); err != nil {
+		return change{}, err
+	}
+	r, err := tx.InsertRegion(h.ctx, r)
+	if err != nil {
+		return change{}, internal(err)
+	}
+	shape := regionShape(r)
+	retags, commitTags, cerr := h.retagAll(tx, h.regionShapes(func(m map[string]domain.RegionShape) { m[r.ID] = shape }))
+	if cerr != nil {
+		return change{}, cerr
+	}
+	return change{
+		events: append([]eventSpec{toAll(E{"kind": "region_created", "region": toRegionJSON(r)})}, retags...),
+		after: func() {
+			h.regions[r.ID] = shape
+			commitTags()
+		},
+	}, nil
+}
+
+func validateRegion(r *store.Region, label string) *domain.CmdError {
+	var err error
+	if r.Label, err = domain.NormalizeRegionLabel(label); err != nil {
+		return domain.BadRequest("%v", err)
+	}
+	if err := domain.ValidateRegionColor(r.Color); err != nil {
+		return domain.BadRequest("%v", err)
+	}
+	if err := domain.ValidateRegionGeometry(r.X, r.Y, r.W, r.H, r.Z); err != nil {
+		return domain.BadRequest("%v", err)
+	}
+	return nil
+}
+
+type updateRegionPayload struct {
+	RegionID string   `json:"regionId"`
+	Label    *string  `json:"label"`
+	X        *float64 `json:"x"`
+	Y        *float64 `json:"y"`
+	W        *float64 `json:"w"`
+	H        *float64 `json:"h"`
+	Color    *string  `json:"color"`
+	Z        *int     `json:"z"`
+}
+
+func (h *Hub) loadRegion(tx store.Tx, id string) (store.Region, *domain.CmdError) {
+	r, err := tx.RegionByID(h.ctx, id)
+	if errors.Is(err, store.ErrNotFound) || (err == nil && r.EventID != h.eventID) {
+		return store.Region{}, domain.BadRequest("no such region")
+	}
+	if err != nil {
+		return store.Region{}, internal(err)
+	}
+	return r, nil
+}
+
+func (h *Hub) updateRegion(tx store.Tx, a domain.Actor, p updateRegionPayload) (change, *domain.CmdError) {
+	if err := domain.AuthorizeRegionEdit(a, h.lifecycle); err != nil {
+		return change{}, err
+	}
+	r, cerr := h.loadRegion(tx, p.RegionID)
+	if cerr != nil {
+		return change{}, cerr
+	}
+	label := r.Label
+	if p.Label != nil {
+		label = *p.Label
+	}
+	for dst, src := range map[*float64]*float64{&r.X: p.X, &r.Y: p.Y, &r.W: p.W, &r.H: p.H} {
+		if src != nil {
+			*dst = *src
+		}
+	}
+	if p.Color != nil {
+		r.Color = *p.Color
+	}
+	if p.Z != nil {
+		r.Z = *p.Z
+	}
+	if err := validateRegion(&r, label); err != nil {
+		return change{}, err
+	}
+	if err := tx.UpdateRegion(h.ctx, r); err != nil {
+		return change{}, internal(err)
+	}
+	shape := regionShape(r)
+	retags, commitTags, cerr := h.retagAll(tx, h.regionShapes(func(m map[string]domain.RegionShape) { m[r.ID] = shape }))
+	if cerr != nil {
+		return change{}, cerr
+	}
+	return change{
+		events: append([]eventSpec{toAll(E{"kind": "region_updated", "region": toRegionJSON(r)})}, retags...),
+		after: func() {
+			h.regions[r.ID] = shape
+			commitTags()
+		},
+	}, nil
+}
+
+type regionIDPayload struct {
+	RegionID string `json:"regionId"`
+}
+
+func (h *Hub) deleteRegion(tx store.Tx, a domain.Actor, p regionIDPayload) (change, *domain.CmdError) {
+	if err := domain.AuthorizeRegionEdit(a, h.lifecycle); err != nil {
+		return change{}, err
+	}
+	r, cerr := h.loadRegion(tx, p.RegionID)
+	if cerr != nil {
+		return change{}, cerr
+	}
+	// Retag first: notes may not reference a deleted region.
+	retags, commitTags, cerr := h.retagAll(tx, h.regionShapes(func(m map[string]domain.RegionShape) { delete(m, r.ID) }))
+	if cerr != nil {
+		return change{}, cerr
+	}
+	if err := tx.DeleteRegion(h.ctx, r.ID); err != nil {
+		return change{}, internal(err)
+	}
+	return change{
+		events: append([]eventSpec{toAll(E{"kind": "region_deleted", "regionId": r.ID})}, retags...),
+		after: func() {
+			delete(h.regions, r.ID)
+			commitTags()
+		},
+	}, nil
+}
+
+func (h *Hub) starNote(tx store.Tx, a domain.Actor, p noteIDPayload) (change, *domain.CmdError) {
+	return h.setStar(tx, a, p.NoteID, true)
+}
+
+func (h *Hub) unstarNote(tx store.Tx, a domain.Actor, p noteIDPayload) (change, *domain.CmdError) {
+	return h.setStar(tx, a, p.NoteID, false)
+}
+
+// setStar bookmarks or un-bookmarks a note. Stars are private: the event
+// goes only to the actor's own connections (SPEC §8.3).
+func (h *Hub) setStar(tx store.Tx, a domain.Actor, noteID string, star bool) (change, *domain.CmdError) {
+	if err := domain.AuthorizeStar(a, h.lifecycle); err != nil {
+		return change{}, err
+	}
+	n, _, cerr := h.visibleNote(tx, a, noteID)
+	if cerr != nil {
+		return change{}, cerr
+	}
+	var changed bool
+	var err error
+	kind := "note_starred"
+	if star {
+		changed, err = tx.StarNote(h.ctx, a.UserID, n.ID)
+	} else {
+		kind = "note_unstarred"
+		changed, err = tx.UnstarNote(h.ctx, a.UserID, n.ID)
+	}
+	if err != nil {
+		return change{}, internal(err)
+	}
+	if !changed {
+		return change{}, nil // already in the requested state
+	}
+	ev := E{"kind": kind, "noteId": n.ID}
+	return change{events: []eventSpec{{part: ev, mod: ev, onlyUser: a.UserID}}}, nil
 }
 
 // auditRoleChange records a role change made through the admin key.
@@ -377,7 +638,7 @@ func (h *Hub) buildSnapshot(u store.User) (snapshotJSON, error) {
 	}
 	s.Regions = make([]regionJSON, 0, len(regions))
 	for _, r := range regions {
-		s.Regions = append(s.Regions, regionJSON{r.ID, r.Label, r.X, r.Y, r.W, r.H, r.Color, r.Z})
+		s.Regions = append(s.Regions, toRegionJSON(r))
 	}
 
 	waves, err := st.Waves(ctx, h.eventID)

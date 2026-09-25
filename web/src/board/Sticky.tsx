@@ -10,8 +10,11 @@ interface Props {
   chatCount: number;
   regionColor: string | null;
   dragging: boolean;
+  /** Fails the personal filters in "dim" mode. */
+  dimmed: boolean;
   onPointerDown: (note: Note, e: PointerEvent<HTMLDivElement>) => void;
   onOpen: (noteId: string) => void;
+  onStar: (note: Note) => void;
 }
 
 export const Sticky = memo(function Sticky({
@@ -22,11 +25,14 @@ export const Sticky = memo(function Sticky({
   chatCount,
   regionColor,
   dragging,
+  dimmed,
   onPointerDown,
   onOpen,
+  onStar,
 }: Props) {
   const classes = ['sticky', `sticky-${note.color}`];
   if (dragging) classes.push('sticky-dragging');
+  if (dimmed) classes.push('sticky-dimmed');
   if (note.hidden) classes.push('sticky-hidden');
   return (
     <div
@@ -46,6 +52,7 @@ export const Sticky = memo(function Sticky({
       data-note-id={note.id}
     >
       {regionColor && <span className="sticky-region" style={{ background: regionColor }} />}
+      <StarButton note={note} onStar={onStar} className="sticky-star" />
       <div className="sticky-title">{note.title}</div>
       <div className="sticky-body">{snippet(note.bodyMd)}</div>
       <div className="sticky-footer">
@@ -68,3 +75,32 @@ export const Sticky = memo(function Sticky({
     </div>
   );
 });
+
+/** Personal bookmark toggle (☆/★); stars are private to their owner. */
+export function StarButton({
+  note,
+  onStar,
+  className,
+}: {
+  note: Note;
+  onStar: (note: Note) => void;
+  className: string;
+}) {
+  return (
+    <button
+      type="button"
+      className={`${className}${note.starred ? ' starred' : ''}`}
+      aria-pressed={note.starred}
+      aria-label={note.starred ? 'Unstar' : 'Star'}
+      title={note.starred ? 'Starred (only you see this)' : 'Star (only you see this)'}
+      onPointerDown={(e) => e.stopPropagation()}
+      onDoubleClick={(e) => e.stopPropagation()}
+      onClick={(e) => {
+        e.stopPropagation();
+        onStar(note);
+      }}
+    >
+      {note.starred ? '★' : '☆'}
+    </button>
+  );
+}

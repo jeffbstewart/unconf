@@ -65,6 +65,25 @@ of them private or in another browser so each has its own cookie.
 9. Stop `make dev` (Ctrl-C) and start it again. Both windows show an amber
    dot while disconnected, then reconnect with the board intact.
 
+**Regions and personal views (milestone 4)**
+
+1. A (organizer): **▭ Draw region**, drag a rectangle over some notes,
+   type a label, press Enter. The region appears in B, and notes whose
+   center is inside it are tagged.
+2. B: switch to **List** in the view bar. Notes are grouped by region.
+   Drag a note into or out of the region on the board (either window), and
+   the list regroups.
+3. A: click the region's label to select it. Rename it, change its color,
+   bring it to the front or back, resize it from the corner handle, or
+   delete it. Tags follow each change.
+4. B: try **My stickies**, **★ Starred**, **Region ▾**, and search, with
+   **Dim** or **Hide**. A's window is unaffected, and B's settings survive a
+   reload.
+5. B: star a note (☆ on hover). Only B sees the ★. Sort the list view by
+   *Starred first*, *Newest*, or *Authored by me first*.
+6. B: turn on **⊞ Snap** and drag a note. It lands on the 20-unit grid. A,
+   with snap off, can still place notes anywhere.
+
 ## Schema changes
 
 The database schema is built entirely from numbered SQL fragments in

@@ -110,6 +110,18 @@ export function applyEvent(s: BoardState, e: BoardEvent): BoardState {
     }
     case 'lifecycle_set':
       return s.event ? { ...s, event: { ...s.event, lifecycle: e.lifecycle } } : s;
+    case 'region_created':
+      return { ...s, regions: [...s.regions.filter((r) => r.id !== e.region.id), e.region] };
+    case 'region_updated':
+      return { ...s, regions: s.regions.map((r) => (r.id === e.region.id ? e.region : r)) };
+    case 'region_deleted':
+      return { ...s, regions: s.regions.filter((r) => r.id !== e.regionId) };
+    case 'note_retagged':
+      return patchNote(s, e.noteId, { regionId: e.regionId });
+    case 'note_starred':
+      return patchNote(s, e.noteId, { starred: true });
+    case 'note_unstarred':
+      return patchNote(s, e.noteId, { starred: false });
     default:
       return s; // kinds from later milestones
   }

@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { fetchMe, logout, type Me } from './api/http';
 import { Login } from './auth/Login';
-import { Board } from './board/Board';
+import { BoardPage } from './board/BoardPage';
 import { useStore } from './store/store';
 import { Toasts } from './Toasts';
 import { TopBar } from './TopBar';
@@ -57,7 +57,7 @@ function Workspace({ me, onLoggedOut }: { me: Me; onLoggedOut: () => void }) {
   let body;
   if (!ready) body = <p className="app-message">Connecting…</p>;
   else if (lifecycle === 'setup' && role === 'participant') body = <NotStarted />;
-  else body = <Board />;
+  else body = <BoardPage />;
 
   return (
     <>

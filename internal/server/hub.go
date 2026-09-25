@@ -80,10 +80,12 @@ func (r *ring) after(since, current int64) ([]outEvent, bool) {
 	return out, true
 }
 
-// noteGeo caches what overlap resolution needs about each note.
+// noteGeo caches what overlap resolution and region tagging need about
+// each note.
 type noteGeo struct {
-	x, y   float64
-	hidden bool
+	x, y     float64
+	hidden   bool
+	regionID string
 }
 
 // pendingMove is a coalesced move waiting for its note's next move slot.
@@ -107,6 +109,7 @@ type Hub struct {
 	clients   map[*conn]struct{}
 	lifecycle domain.Lifecycle
 	geo       map[string]*noteGeo
+	regions   map[string]domain.RegionShape
 	lastMove  map[string]time.Time
 	pending   map[string]*pendingMove
 }
@@ -122,6 +125,7 @@ func newHub(ctx context.Context, st *store.Store, eventID string, ringSize int) 
 		ring:     newRing(ringSize),
 		clients:  map[*conn]struct{}{},
 		geo:      map[string]*noteGeo{},
+		regions:  map[string]domain.RegionShape{},
 		lastMove: map[string]time.Time{},
 		pending:  map[string]*pendingMove{},
 	}
@@ -139,7 +143,14 @@ func newHub(ctx context.Context, st *store.Store, eventID string, ringSize int) 
 		return nil, err
 	}
 	for _, n := range notes {
-		h.geo[n.ID] = &noteGeo{n.X, n.Y, n.Hidden()}
+		h.geo[n.ID] = &noteGeo{n.X, n.Y, n.Hidden(), n.RegionID}
+	}
+	regions, err := st.Regions(ctx, eventID)
+	if err != nil {
+		return nil, err
+	}
+	for _, r := range regions {
+		h.regions[r.ID] = regionShape(r)
 	}
 	return h, nil
 }
