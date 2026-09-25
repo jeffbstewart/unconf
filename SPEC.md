@@ -139,7 +139,8 @@ note per wave.
 
 ### Client
 
-- React 18 + TypeScript 5 + Vite 5.
+- React 18 + TypeScript 5 + Vite 8 (Rolldown-based; requires Node ^20.19 or ≥22.12),
+  tested with Vitest 5.
 - State: Zustand (v4) store fed exclusively by WebSocket events (server is
   authoritative; optimistic UI only for drag-in-progress).
 - Markdown rendering: `react-markdown` + `remark-gfm` (safe by default — no raw
