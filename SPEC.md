@@ -58,7 +58,9 @@ system from it without access to prior discussion.
 | **Cell** | A (slot, track) position in a wave's grid; holds at most one session. |
 | **Assignment** | A note placed in a cell. |
 | **Scheduler** | Anyone who builds schedules: moderators and organizers. |
-| **Interest** | Who wants to be in a session: its voters, plus its proposer (who facilitates it and so can't attend anything concurrent). |
+| **Facilitator** | Someone running a session: its proposer, plus anyone who volunteered to co-facilitate (or came in through a merge). Facilitating a session *is* your vote for it (§4.3). A session with none *needs a facilitator* and can't be scheduled. |
+| **Interest** | Who wants to be in a session: its voters — which include its facilitators, who can't attend anything concurrent. |
+| **Merge** | A moderator combining a duplicate session into another (§4.4). |
 | **Personal view settings** | Client-only settings — filters, sort order, snap-to-grid, camera — that never affect other users' rendering. |
 | **Star** | A personal bookmark on a note. Stored server-side (so it survives devices/reloads) but visible only to its owner; feeds personal filters and sorts. |
 
@@ -71,17 +73,20 @@ A higher role can do everything a lower role can.
 
 | Capability | Participant | Moderator | Organizer |
 |---|---|---|---|
-| Create notes; edit/delete **own** notes; add/remove links on own notes | ✔ | ✔ | ✔ |
+| Create notes (you become facilitator); edit notes you facilitate and their links; delete a note you solely facilitate | ✔ | ✔ | ✔ |
+| Volunteer to co-facilitate any session; withdraw as facilitator (even the last one) | ✔ | ✔ | ✔ |
+| Suggest merging two sessions | ✔ | ✔ | ✔ |
 | Move any (unscheduled, not hidden) note on the board | ✔ | ✔ | ✔ |
 | Vote / retract votes while voting is open | ✔ | ✔ | ✔ |
 | Star/unstar any note (personal bookmark) | ✔ | ✔ | ✔ |
 | Post chat messages | ✔ | ✔ | ✔ |
 | Edit/delete **any** note; edit links on any note | | ✔ | ✔ |
 | Hide notes and chat messages (permanent; there is no unhide) | | ✔ | ✔ |
+| Merge duplicate sessions; review/dismiss merge suggestions | | ✔ | ✔ |
 | Create/edit/delete regions | | ✔ | ✔ |
 | See hidden items (flagged) and the audit log | | ✔ | ✔ |
 | Open/close voting; set votes-per-user | | | ✔ |
-| Manage waves, slots, tracks, assignments; run the schedule suggester | | ✔ | ✔ |
+| Manage waves, slots, tracks, assignments; run the schedule suggester; cancel a session in a locked wave | | ✔ | ✔ |
 | Advance event lifecycle; promote/demote users (participant ↔ moderator) | | | ✔ |
 
 - The first organizer is bootstrapped by logging in with the admin key (§6).
@@ -153,10 +158,11 @@ personal `votes_used_set {votesUsed}` event.
 are kept as-is ("pinned"). The result is ordinary `note_assigned` events;
 schedulers then adjust by hand and lock. It never locks on its own.
 
-1. **Eligible:** visible notes not assigned in this wave and not scheduled in
-   any locked/done wave, with **at least `scheduleThreshold` voters** (event
-   setting, default 2). (Repeats and below-threshold notes can still be
-   placed by hand.)
+1. **Eligible:** visible notes **with at least one facilitator**, not assigned
+   in this wave and not scheduled in any locked/done wave, with **at least
+   `scheduleThreshold` voters** (event setting, default 2). (Repeats and
+   below-threshold notes can still be placed by hand; facilitator-less notes
+   can't be scheduled at all, §4.3.)
 2. **How many:** K = number of empty cells (e.g. 4 slots × 6 tracks = 24,
    minus any pinned).
 3. **Which:** the top K eligible notes by voter count; ties → older first,
@@ -164,8 +170,8 @@ schedulers then adjust by hand and lock. It never locks on its own.
 4. **Where:** place the K sessions into slots to minimize **conflicts**. For
    a slot holding sessions S, a person *p* with interest in *k* of them
    contributes *k − 1* conflicts (they can only be in one place). Interest =
-   voters ∪ {proposer}.
-   - **Hard constraint:** a proposer never has two of their own sessions in
+   voters (facilitators are always voters, §4.3).
+   - **Hard constraint:** no facilitator ever has two of their sessions in
      one slot. Sessions that can't be placed without breaking it stay in the
      pool (the ack reports how many).
    - **Secondary:** balance slots — minimize the largest per-slot sum of
@@ -182,6 +188,79 @@ schedulers then adjust by hand and lock. It never locks on its own.
 
 The same conflict computation powers the grid's conflict overlay (§11), so
 hand-built schedules get the same feedback.
+
+### 4.3 Facilitators
+
+Any session can have several facilitators (decided 2026-09-25). Facilitating
+a session **is your vote** for it:
+
+- **Proposing** a session makes you its first facilitator and casts your vote
+  for it. That needs a free vote in your budget (out of budget →
+  `not_allowed_now`: withdraw a vote first). It works whether or not voting is
+  open — proposing is always your own choice.
+- **Volunteering** ("I'd co-facilitate") adds you as a facilitator. If you had
+  already voted for the session, that vote simply becomes your facilitator
+  vote (no new budget); otherwise it needs a free vote. On a session already
+  scheduled in a locked/done wave, you join without a vote (its votes are
+  history, §4.1).
+- **Withdrawing**: any facilitator may withdraw — including the last one
+  (e.g. a more compelling session landed in the same slot; decided
+  2026-09-25). It removes them as facilitator *and* removes their vote (unless
+  the session's votes are history).
+- **Needs a facilitator**: a session with no facilitators is flagged
+  everywhere it appears (sticky, list, schedule), with an **I'd
+  co-facilitate** call to action for anyone. It **can't be scheduled**
+  (`assign_note` → `not_allowed_now`; the suggester skips it). If it is
+  already scheduled, it also lands in the moderators' queue, and moderators
+  fix it one of two ways: find someone who volunteers (moderators may
+  volunteer themselves, but can't make anyone else a facilitator — that would
+  spend that person's vote, §11), or take it off the schedule — `unassign_note`
+  in an open wave, `cancel_session` in a locked one.
+- **Cancelling** a session in a locked wave (`cancel_session`, schedulers) is
+  for exactly this: its cell is marked cancelled (shown struck through with
+  "Cancelled"), `CalendarService.CancelBreakout` removes its meeting (stub in
+  phase 1), and it can be scheduled again later by hand. Its voters keep the
+  refund they got at lock — re-counting those votes would consume them (§11).
+- While you facilitate a session you can't `retract_vote` on it — withdraw
+  instead.
+- Every facilitator may edit the session and its links. Deleting it (outside
+  moderation) needs a **sole** facilitator, no votes from anyone else, and no
+  assignments. A facilitator-less session can be edited or deleted only by
+  moderators.
+- `notes.author_id` stays the original proposer, for the record; the
+  `facilitators` table is who runs the session now.
+- For scheduling, facilitators are voters like anyone else, plus the hard
+  rules that none of them is double-booked and that a session needs at least
+  one (§4.2).
+
+### 4.4 Merging duplicate sessions
+
+Moderators merge; everyone else can suggest it (decided 2026-09-25).
+
+- **Suggesting**: dropping one sticky onto another (its center inside the
+  other's rectangle) asks a participant "Suggest merging these?" (or "Just
+  move", which moves it as usual, nudged clear). A suggestion goes to a
+  moderator queue; the suggester just sees "Suggested to moderators". The
+  same pair is only queued once.
+- **Merging** (`merge_notes`, mods+): the same drop by a moderator — or
+  *Review* on a queued suggestion — opens the **merge dialog**: pick the
+  surviving title (either, or edit), a description prefilled with both bodies
+  (editable), and a preview of the combined facilitators and voters. Neither
+  session may be scheduled in any wave (unschedule first).
+- **Result** — the *target* survives (keeping its position, color, and
+  region) with:
+  - the chosen title and description;
+  - links: target's then source's, de-duplicated by URL, capped at 20;
+  - chat: the source's messages move over (threads intact);
+  - stars: anyone who starred either has the merged one starred;
+  - **facilitators**: the union;
+  - **votes**: the union, one per person. Someone who voted for both keeps
+    one vote and gets the other **back** (a private `votes_used_set`) — merges
+    only ever free votes (§11).
+- The *source* becomes a tombstone (`notes.merged_into`), gone from boards
+  and snapshots but kept for the record; open suggestions involving it are
+  closed. Merging is one-way, like hiding. It's audited, and the facilitators
+  of both sessions get a notice ("“A” was merged into “B” by Mo").
 
 ---
 
@@ -303,8 +382,25 @@ CREATE TABLE notes (
   region_id  TEXT REFERENCES regions(id),          -- derived (§9), nullable
   hidden_by  TEXT REFERENCES users(id),            -- moderation
   hidden_at  TEXT,
+  merged_into TEXT REFERENCES notes(id),           -- set when merged away (§4.4): a tombstone
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL
+);
+
+CREATE TABLE facilitators (       -- §4.3; the proposer is the first row
+  note_id  TEXT NOT NULL REFERENCES notes(id) ON DELETE CASCADE,
+  user_id  TEXT NOT NULL REFERENCES users(id),
+  added_at TEXT NOT NULL,
+  PRIMARY KEY (note_id, user_id)
+);          -- every facilitator also has a vote row for the note (unless its votes are history)
+
+CREATE TABLE merge_suggestions (  -- §4.4
+  id           TEXT PRIMARY KEY,
+  source_id    TEXT NOT NULL REFERENCES notes(id) ON DELETE CASCADE,
+  target_id    TEXT NOT NULL REFERENCES notes(id) ON DELETE CASCADE,
+  suggested_by TEXT NOT NULL REFERENCES users(id),
+  created_at   TEXT NOT NULL,
+  UNIQUE (source_id, target_id)
 );
 
 CREATE TABLE note_links (
@@ -384,6 +480,12 @@ CREATE TABLE audit_log (
   at       TEXT NOT NULL
 );
 ```
+
+(M6b adds a fragment creating `facilitators` and `merge_suggestions`, adding
+`notes.merged_into` and `assignments.cancelled_at` (a cancelled session in a
+locked wave, §4.3 — it still counts as "scheduled in a closed wave" for the
+§4.1 refund), and back-filling each existing note's author as its facilitator
+with a vote — dev data only; no deployed data exists.)
 
 (The shipped fragments 001–006 created an event-level `rooms` table and
 room-based assignments; M6 adds a fragment that drops `rooms`, rebuilds
@@ -485,13 +587,18 @@ failures (voting closed, wave not open, lifecycle) → `not_allowed_now`.
 
 | cmd | payload | who / gating |
 |---|---|---|
-| `create_note` | `{title, bodyMd?, x, y, color?}` | any, lifecycle `active` (mods+ also during `setup`); position is overlap-resolved by the server (§9) |
-| `update_note` | `{noteId, title?, bodyMd?, color?}` | author or mods+ |
+| `create_note` | `{title, bodyMd?, x, y, color?}` | any, lifecycle `active` (mods+ also during `setup`); needs a free vote — the proposer becomes facilitator and votes for it (§4.3), even while voting is closed; position is overlap-resolved by the server (§9) |
+| `update_note` | `{noteId, title?, bodyMd?, color?}` | facilitators or mods+ |
 | `move_note` | `{noteId, x, y}` | any; note must not be hidden; requested position is overlap-resolved by the server (§9); throttle: server coalesces to ≤ 20 moves/s per note |
-| `delete_note` | `{noteId}` | author (only if note has 0 votes and 0 assignments), or mods+ always |
-| `set_links` | `{noteId, links: [{title,url,kind}]}` | author or mods+ (full replace) |
+| `delete_note` | `{noteId}` | its sole facilitator (only if nobody else voted and it has no assignments), or mods+ always |
+| `set_links` | `{noteId, links: [{title,url,kind}]}` | facilitators or mods+ (full replace) |
+| `volunteer_facilitator` | `{noteId}` | any who may interact, note not hidden; converts an existing vote or needs a free vote (§4.3) |
+| `withdraw_facilitator` | `{noteId}` | any facilitator, even the last; removes their vote too; a session left without facilitators is flagged (§4.3) |
+| `suggest_merge` | `{sourceId, targetId}` | any who may interact; both visible and distinct; a pair already queued is a no-op |
+| `dismiss_merge_suggestion` | `{suggestionId}` | mods+ |
+| `merge_notes` | `{sourceId, targetId, title, bodyMd}` | mods+; both visible, distinct, and unscheduled in every wave (§4.4) |
 | `cast_vote` | `{noteId}` | any who may interact (lifecycle as `create_note`), `voting_open`, note not hidden; **one vote per person per session** — voting again is a no-op (ack, no event); otherwise needs budget remaining (out of budget → `not_allowed_now`) |
-| `retract_vote` | `{noteId}` | same gating; removes the user's vote there; none there → `bad_request` |
+| `retract_vote` | `{noteId}` | same gating; removes the user's vote there; none there → `bad_request`; on a session you facilitate → `not_allowed_now` (withdraw instead) |
 | `star_note` / `unstar_note` | `{noteId}` | any, in every lifecycle (participants excepted during `setup`, when they can't see the board); stars are personal — resulting events reach only the acting user's connections; starring an already-starred note is a no-op (ack, no event) |
 | `post_message` | `{noteId, body, threadId?}` | any, lifecycle `active`; `threadId` must reference a root message on the same note |
 | `hide_message` | `{messageId}` | mods+; permanent (no unhide) |
@@ -507,7 +614,8 @@ failures (voting closed, wave not open, lifecycle) → `not_allowed_now`.
 | `delete_wave` | `{waveId}` | schedulers, wave `planned` |
 | `set_wave_status` | `{waveId, status}` | schedulers, forward-only, ≤ 1 wave `open`; lock triggers §4 calendar seam and §4.1 refunds |
 | `create_slot` / `delete_slot` | `{waveId, startAt, endAt}` / `{slotId}` | schedulers, wave `planned|open`; `endAt > startAt`, no overlap with the wave's other slots; delete only if the slot is empty |
-| `assign_note` | `{noteId, slotId, track}` | schedulers, wave `open`, note visible; replaces any existing assignment of that note **in that wave**; cell must be free |
+| `assign_note` | `{noteId, slotId, track}` | schedulers, wave `open`, note visible **and has a facilitator**; replaces any existing assignment of that note **in that wave**; cell must be free |
+| `cancel_session` | `{assignmentId}` | schedulers, wave `locked`: marks it cancelled and cancels its meeting (§4.3); refunds stand |
 | `unassign_note` | `{assignmentId}` | schedulers, wave `open` |
 | `clear_wave` | `{waveId}` | schedulers, wave `open`: removes all its assignments |
 | `suggest_schedule` | `{waveId}` | schedulers, wave `open`; fills empty cells (§4.2); ack carries `{placed, unplaced}` |
@@ -534,7 +642,13 @@ Event kinds mirror commands: `note_created`, `note_updated`, `note_moved`,
 `wave_status_set`, `slot_created|deleted`, `note_assigned {assignment}`,
 `note_unassigned {assignmentId}`, `assignment_links_set {links: {assignmentId: meetUrl}}`,
 `schedule_threshold_set`, `votes_used_set {votesUsed}` (personal, §4.1),
-`role_set`, `user_joined`.
+`facilitator_added {noteId, userId}`, `facilitator_removed {noteId, userId}`,
+`session_cancelled {assignmentId}`,
+`note_merged {sourceId, targetId, byUserId, note}` (clients drop the source and
+replace the target; `note` carries no personal fields — clients derive
+`voted` from `voters` and `starred` from either note), `merge_suggested
+{suggestion}` / `merge_suggestion_dismissed {suggestionId}` (moderators+ only;
+participants skip those seqs), `role_set`, `user_joined`.
 
 A command normally answers with a bare `ack`; `suggest_schedule` is the one
 whose ack also carries a `result` (`{placed: n, unplaced: n}`).
@@ -571,11 +685,12 @@ optimistic position to them.
 {
   "event":   { "id","name","lifecycle","votingOpen","votesPerUser","scheduleThreshold" },
   "users":   [ {"id","name","role"} ],
-  "notes":   [ {"id","title","bodyMd","authorId","x","y","color","regionId",
-                "voteTotal","voters":[userId],"voted","starred","hidden"?,"links":[...],"scheduled":bool} ],   // voteTotal = number of voters; voters = who (votes are public); voted = this user's vote
+  "notes":   [ {"id","title","bodyMd","authorId","facilitators":[userId],"x","y","color","regionId",
+                "voteTotal","voters":[userId],"voted","starred","hidden"?,"links":[...],"scheduled":bool} ],   // voteTotal = number of voters; voters = who (votes are public); voted = this user's vote; merged tombstones are omitted
+  "mergeSuggestions": [ {"id","sourceId","targetId","suggestedBy","createdAt"} ],   // moderators+ only; [] for participants
   "regions": [ {"id","label","x","y","w","h","color","z"} ],
   "waves":   [ {"id","name","status","opensAt","tracks","slots":[{"id","startAt","endAt"}]} ],
-  "assignments": [ {"id","noteId","slotId","track","meetUrl"} ],
+  "assignments": [ {"id","noteId","slotId","track","meetUrl","cancelled":bool} ],
   "messages": { "<noteId>": [ {"id","authorId","threadId","body","hidden"?,"createdAt"} ] },
   "me":      { "votesRemaining": n, "votesUsed": n }   // votesUsed per §4.1
 }
@@ -651,12 +766,14 @@ type Breakout struct {
     AssignmentID, NoteID, Title string
     Track      int
     Start, End time.Time
-    Attendees  []string // emails of the proposer and voters who gave one
+    Attendees  []string // emails of the facilitators and voters who gave one
 }
 type CalendarService interface {
     // Called (outside the hub transaction) when a wave is locked. Returns a
     // meet link per assignment id, stored on the assignment.
     CreateBreakouts(ctx context.Context, waveName string, b []Breakout) (map[string]string, error)
+    // Called (outside the hub transaction) when a locked session is cancelled (§4.3).
+    CancelBreakout(ctx context.Context, assignmentID string) error
 }
 // Stub: logs and returns fake meet URLs ("https://meet.example/<assignmentID>").
 
@@ -715,12 +832,23 @@ The top bar also shows the event's lifecycle; organizers advance it there
 - **Region layer** under notes: tinted rects with header labels. Moderators get
   a "draw region" tool (drag to create) and move/resize/relabel handles.
 - **Stickies** (180×120): title + 2-line body snippet, color, vote-dot count
-  badge, chat-count badge, author initials, region tint strip, star toggle
+  badge, chat-count badge, facilitators' initials (up to 3, then "+n"), region tint strip, star toggle
   (☆/★ on hover — personal). Drag to move (optimistic ghost; the server's
   overlap-resolved `note_moved` reconciles, §9). Double-click/tap →
   **detail modal**: full markdown body, links list (doc/slides icons), vote
   button (+/-), star toggle, chat thread panel, edit affordances per role,
-  moderator hide button.
+  moderator hide button; *Facilitated by …* with **I'd co-facilitate** (casts
+  your vote — the public-votes notice applies) or **Withdraw as facilitator**
+  (for the last one it warns that the session will need a new facilitator).
+  A session with no facilitators shows a **Needs a facilitator** badge on its
+  sticky, list row, and schedule cell.
+- **Drop one sticky onto another** (its center inside the other): moderators
+  get "Merge “A” into “B”?" → the merge dialog (§4.4); everyone else gets
+  "Suggest merging these?". Either way "Just move" moves it as usual.
+- **Moderator queue**: a toolbar badge "Needs attention (n)" opens it — merge
+  suggestions (each pair with who suggested it, **Review** → merge dialog,
+  **Dismiss**) and scheduled sessions that need a facilitator (**Go to
+  schedule**, to find a volunteer, unschedule, or cancel).
 - **Create**: double-click empty board or a "+ New session" button → inline
   title entry, then optional detail editing in the modal.
 - **View bar** (client-only): filters — My stickies · My votes · Starred ·
@@ -742,7 +870,9 @@ replaces stacked dots). Each sticky (and the modal and list rows) shows a
 `▲ n` voter count that doubles as a toggle for your own vote, filled when
 you've voted. The budget (default 5 sessions) is shown in the top bar;
 out of budget, unvoted toggles disable (your votes can still be withdrawn).
-When `voting_open` flips off, toggles disable live; tallies stay.
+When `voting_open` flips off, toggles disable live; tallies stay. On a session
+you facilitate, your toggle is shown filled and locked ("You're facilitating —
+withdraw to remove your vote").
 
 **Votes are public** — every vote event names its voter (§8.3), so anyone can
 see who voted for what. Before a user's *first* vote the client shows an
@@ -767,7 +897,7 @@ record but never count again.
 Wave tabs across the top (in creation order, with status badges); each wave
 is a grid with **rows = slots** (times in the viewer's local time zone) and
 **columns = Track 1…T**. A cell shows the session title (opens the detail
-modal), proposer, `▲ voters`, the star toggle, and — once the wave is locked
+modal), facilitators, `▲ voters`, the star toggle, and — once the wave is locked
 — a **Join** link to its meeting. An open wave is shown to everyone, live,
 labelled *Draft — may change*.
 
@@ -776,8 +906,8 @@ labelled *Draft — may change*.
 - **Happening now / Up next**: a strip above the grid with the current slot's
   sessions (by the viewer's clock) and their Join links, so switching rooms
   is one click; the next slot is previewed below it.
-- **Your picks**: cells you voted for, proposed, or starred are highlighted
-  (distinct markers), and your own sessions are labelled *You're
+- **Your picks**: cells you voted for, facilitate, or starred are highlighted
+  (distinct markers), and sessions you facilitate are labelled *You're
   facilitating*.
 - **Your conflicts**: a slot holding two or more of your picks gets a notice
   ("2 of your picks at 10:30"). If one is your own session, the notice says
@@ -796,9 +926,13 @@ labelled *Draft — may change*.
   (§4.2) and reports "placed 24, 6 didn't fit"; **Clear** empties the wave.
 - **Conflict overlay**: each slot row shows its conflict count; hovering a
   cell shows the sessions in the same slot that share interest with it
-  ("3 people also want *X*"), and a proposer double-booking is flagged red.
+  ("3 people also want *X*"), and a facilitator double-booking is flagged red.
   The same numbers the suggester optimizes.
-- Locked/done waves render read-only with Join links.
+- Locked/done waves render read-only with Join links; schedulers can
+  **Cancel session** on a locked cell (confirm), which is how a session that
+  lost its last facilitator comes off a published schedule.
+- The pool marks sessions that need a facilitator and won't accept them into
+  cells.
 
 ### Realtime & errors
 
@@ -865,10 +999,24 @@ Build in order; each milestone ends compiling, tested, and demoable.
    scheduled sessions their votes back; a participant's schedule view shows
    what's happening now with one-click Join links and flags their conflicts.
 
-   **6b. Schedule suggester** (its own PR, after 6) — `suggest_schedule`
-   (§4.2) and the `scheduleThreshold` setting.
+   **6b. Facilitators & merging** (its own PR) — §4.3 and §4.4: facilitator
+   votes, volunteer/withdraw, facilitator permissions, drop-on-top suggest or
+   merge, the merge dialog, and the moderators' suggestion queue.
+   ✓ Proposing uses a vote; a volunteer co-facilitator's vote is counted and
+   withdrawing removes it; when the last facilitator withdraws the session is
+   flagged "Needs a facilitator", can't be scheduled, and — if scheduled —
+   shows up in the moderators' queue, where a volunteer fixes it or a
+   scheduler unschedules/cancels it (cancelling a locked session calls the
+   Calendar stub and keeps its voters' refund); a participant's drop-on-top
+   reaches the moderators' queue; a moderator's merge combines facilitators,
+   voters (anyone who voted both gets a vote back), links, chat, and stars,
+   and the source disappears from every board; no moderation or scheduling
+   action ever lowers anyone's remaining votes.
+
+   **6c. Schedule suggester** (its own PR, after 6b, so it uses facilitators) —
+   `suggest_schedule` (§4.2).
    ✓ With 30 eligible sessions and 24 empty cells, it places the 24 most-voted
-   and leaves 6 in the pool; it never double-books a proposer; pinned cells
+   and leaves 6 in the pool; it never double-books a facilitator; pinned cells
    are untouched; on a crafted input with a known conflict-free arrangement it
    finds zero conflicts; the same input always yields the same schedule.
 7. **Chat** — thread panel, realtime, thread-shaped storage.
@@ -889,8 +1037,11 @@ Build in order; each milestone ends compiling, tested, and demoable.
 ## 14. Testing & verification
 
 - **Go unit tests:** scheduling — conflict metric, suggester (selection
-  order, threshold, proposer constraint, pinned cells, determinism, known
+  order, threshold, facilitator constraint, pinned cells, determinism, known
   optimum on crafted inputs), slot validation, vote refunds on lock;
+  facilitators (vote coupling, withdrawal incl. the last one, "needs a
+  facilitator" blocking scheduling, cancellation keeping refunds, budget) and merges (unions,
+  vote dedupe refunds, tombstones, never consuming a vote);
   store CRUD; schema evolution (fresh apply, idempotent
   restart, new fragments, refusal on edited/renamed/missing fragments,
   rollback of a failing fragment, file-name validation); vote budget math; wave/lifecycle
