@@ -1,0 +1,9 @@
+/bin/
+/export/
+*.db
+*.db-shm
+*.db-wal
+
+/web/node_modules/
+/web/dist/*
+!/web/dist/.gitkeep

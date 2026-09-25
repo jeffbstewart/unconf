@@ -1,0 +1,15 @@
+:root {
+  font-family: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+  color: #1f2328;
+  background: #f6f5f1;
+}
+
+body {
+  margin: 0;
+}
+
+.shell {
+  display: grid;
+  place-items: center;
+  min-height: 100vh;
+}
