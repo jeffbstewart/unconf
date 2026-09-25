@@ -164,7 +164,8 @@ the server.
 cmd/unconf/main.go        — flags/env, wiring, serve
 internal/domain/          — types, lifecycle/wave state machines, command
                             validation, region containment
-internal/store/           — sqlite open/migrate (embedded SQL), queries
+internal/store/           — sqlite open, queries
+internal/store/schema/    — schema evolution plumbing + NNN_*.sql fragments (§7.1)
 internal/server/          — http handlers, ws hub, session middleware, embed
 internal/integrations/    — google service interfaces + stubs
 web/                      — vite react app
@@ -200,8 +201,8 @@ Makefile, README.md, SPEC.md, LICENSE
 
 ## 7. Data model
 
-SQLite schema (migrations embedded in `internal/store/migrations/*.sql`,
-applied by version at startup). All ids are server-generated opaque strings
+SQLite schema, delivered as numbered fragments through the schema evolution
+mechanism (§7.1); the listing below is the logical result. All ids are server-generated opaque strings
 (`crypto/rand`, 16 bytes, base32 — sortable not required). Timestamps are UTC
 RFC-3339 strings.
 
@@ -327,6 +328,40 @@ CREATE TABLE audit_log (
 
 On first run the server creates a default event (`name` from env
 `UNCONF_EVENT_NAME`, default "Unconference") and stores its id in `meta`.
+
+### 7.1 Schema evolution
+
+- The server's code creates exactly one table itself:
+
+  ```sql
+  CREATE TABLE schema_version (
+    version    INTEGER PRIMARY KEY,  -- fragment number
+    name       TEXT NOT NULL,        -- fragment file name
+    sha256     TEXT NOT NULL,        -- hex SHA-256 of the fragment's bytes
+    applied_at TEXT NOT NULL
+  );
+  ```
+
+  Every other table, index, or data change (including `meta`) arrives as a
+  **fragment**: a SQL file in `internal/store/schema/` named
+  `NNN_lower_snake_description.sql`, where `NNN` is a three-digit number.
+  Fragments are embedded in the binary with `embed.FS`.
+- Numbers must run 001, 002, … with no gaps or duplicates. Any other file in
+  the directory is an error.
+- At startup, before serving, the server:
+  1. validates the embedded fragments;
+  2. creates `schema_version` if absent;
+  3. checks that the recorded rows are exactly fragments 1..n of the binary,
+     with identical names and SHA-256 hashes. It **refuses to start** on any
+     mismatch: an applied fragment was edited or renamed, the history has
+     gaps, or the database has fragments this binary lacks (an older binary
+     on a newer database);
+  4. applies each pending fragment in its own transaction together with its
+     `schema_version` row, so a failed fragment leaves no trace and is
+     retried on the next start.
+- Applied fragments are immutable. Schema changes are always new fragments.
+  `.gitattributes` pins fragment line endings so hashes are identical on
+  every checkout.
 
 ---
 
@@ -681,7 +716,9 @@ Build in order; each milestone ends compiling, tested, and demoable.
 
 ## 14. Testing & verification
 
-- **Go unit tests:** store CRUD + migrations; vote budget math; wave/lifecycle
+- **Go unit tests:** store CRUD; schema evolution (fresh apply, idempotent
+  restart, new fragments, refusal on edited/renamed/missing fragments,
+  rollback of a failing fragment, file-name validation); vote budget math; wave/lifecycle
   transition rules (incl. one-open-wave); region containment (z-order, ties,
   region-edit retagging); sticky non-overlap resolution (deterministic spiral,
   hidden notes ignored, re-resolution on unhide); star privacy (star events

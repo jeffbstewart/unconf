@@ -4,10 +4,12 @@ import (
 	"context"
 	"errors"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/jeffbstewart/unconf/internal/domain"
+	"github.com/jeffbstewart/unconf/internal/store/schema"
 )
 
 func openTemp(t *testing.T) (*Store, string) {
@@ -21,22 +23,40 @@ func openTemp(t *testing.T) (*Store, string) {
 	return s, path
 }
 
-func TestMigrateCreatesSchemaAndIsIdempotent(t *testing.T) {
+func TestOpenAppliesShippedSchema(t *testing.T) {
 	ctx := context.Background()
 	s, path := openTemp(t)
-	var version, tables int
-	s.db.QueryRowContext(ctx, "PRAGMA user_version").Scan(&version)
+	frags, err := schema.Load(schema.Fragments)
+	if err != nil {
+		t.Fatal(err)
+	}
+	applied, err := schema.AppliedVersions(ctx, s.db)
+	if err != nil || len(applied) != len(frags) {
+		t.Fatalf("applied %d of %d fragments: %v", len(applied), len(frags), err)
+	}
+	// The §7 tables plus schema_version.
+	var tables int
 	s.db.QueryRowContext(ctx, "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table'").Scan(&tables)
-	if version != 1 || tables != 14 {
-		t.Fatalf("user_version=%d tables=%d", version, tables)
+	if tables != 15 {
+		t.Fatalf("tables=%d, want 15", tables)
 	}
 	s.Close()
 
-	again, err := Open(ctx, path) // re-running migrations must be a no-op
+	again, err := Open(ctx, path) // reopening applies nothing new
 	if err != nil {
 		t.Fatal(err)
 	}
 	again.Close()
+}
+
+func TestOpenRefusesTamperedSchemaHistory(t *testing.T) {
+	ctx := context.Background()
+	s, path := openTemp(t)
+	s.db.ExecContext(ctx, "UPDATE schema_version SET sha256 = 'bogus' WHERE version = 2")
+	s.Close()
+	if _, err := Open(ctx, path); err == nil || !strings.Contains(err.Error(), "002_events_users.sql") {
+		t.Fatalf("want refusal naming the fragment, got %v", err)
+	}
 }
 
 func TestPragmas(t *testing.T) {

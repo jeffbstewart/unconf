@@ -35,6 +35,18 @@ UNCONF_ADMIN_KEY=choose-a-secret ./bin/unconf   # serves the app on :8080
 make test    # go vet + go test, then tsc + vitest
 ```
 
+## Schema changes
+
+The database schema is built entirely from numbered SQL fragments in
+`internal/store/schema/` (`001_meta.sql`, `002_events_users.sql`, ...), which
+are embedded in the binary. At startup the server applies any fragments the
+database hasn't seen and records each one's SHA-256 in `schema_version`.
+
+To change the schema, **add** the next fragment, e.g.
+`007_note_capacity.sql`. Never edit or rename a fragment that has been
+applied anywhere: the server refuses to start if a recorded hash doesn't
+match the binary's fragment. See SPEC.md §7.1.
+
 ## Configuration
 
 | Env var | Default | Purpose |
