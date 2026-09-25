@@ -8,8 +8,8 @@ body {
   margin: 0;
 }
 
-.shell {
-  display: grid;
-  place-items: center;
-  min-height: 100vh;
+.app-message {
+  padding: 32px 16px;
+  text-align: center;
+  color: #57606a;
 }

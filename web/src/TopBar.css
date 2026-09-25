@@ -1,0 +1,52 @@
+.topbar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  height: 48px;
+  padding: 0 16px;
+  background: #fff;
+  border-bottom: 1px solid #d8d6cf;
+}
+
+.topbar-brand {
+  font-weight: 700;
+  font-size: 18px;
+}
+
+.topbar-spacer {
+  flex: 1;
+}
+
+.topbar-user {
+  font-weight: 600;
+}
+
+.role-badge {
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 600;
+  text-transform: capitalize;
+  background: #eaeef2;
+  color: #424a53;
+}
+
+.role-moderator {
+  background: #ddf4ff;
+  color: #0550ae;
+}
+
+.role-organizer {
+  background: #fbefff;
+  color: #8250df;
+}
+
+.topbar-logout {
+  font: inherit;
+  font-size: 14px;
+  padding: 4px 10px;
+  border: 1px solid #d0d7de;
+  border-radius: 6px;
+  background: #f6f8fa;
+  cursor: pointer;
+}

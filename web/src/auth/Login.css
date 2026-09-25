@@ -1,0 +1,82 @@
+.login {
+  display: grid;
+  place-items: center;
+  min-height: 100vh;
+  padding: 16px;
+  box-sizing: border-box;
+}
+
+.login-card {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  width: min(360px, 100%);
+  padding: 28px;
+  background: #fff;
+  border-radius: 10px;
+  box-shadow: 0 1px 3px rgb(0 0 0 / 0.12), 0 8px 24px rgb(0 0 0 / 0.06);
+}
+
+.login-card h1 {
+  margin: 0;
+  font-size: 28px;
+}
+
+.login-hint {
+  margin: 0;
+  color: #57606a;
+  font-size: 14px;
+}
+
+.login-card label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.login-card .optional {
+  font-weight: 400;
+  color: #57606a;
+}
+
+.login-card input {
+  font: inherit;
+  font-weight: 400;
+  padding: 8px 10px;
+  border: 1px solid #d0d7de;
+  border-radius: 6px;
+}
+
+.login-card details summary {
+  cursor: pointer;
+  font-size: 14px;
+  color: #57606a;
+}
+
+.login-card details label {
+  margin-top: 8px;
+}
+
+.login-error {
+  margin: 0;
+  color: #cf222e;
+  font-size: 14px;
+}
+
+.login-card button {
+  font: inherit;
+  font-weight: 600;
+  padding: 9px;
+  border: 0;
+  border-radius: 6px;
+  background: #1f6feb;
+  color: #fff;
+  cursor: pointer;
+}
+
+.login-card button:disabled {
+  background: #8cb4f5;
+  cursor: default;
+}
