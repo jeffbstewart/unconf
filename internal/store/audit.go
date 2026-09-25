@@ -19,7 +19,7 @@ type AuditEntry struct {
 }
 
 // AppendAudit inserts an audit log entry.
-func (s *Store) AppendAudit(ctx context.Context, e AuditEntry) error {
+func (s Queries) AppendAudit(ctx context.Context, e AuditEntry) error {
 	if e.ID == "" {
 		e.ID = domain.NewID()
 	}
@@ -33,7 +33,7 @@ func (s *Store) AppendAudit(ctx context.Context, e AuditEntry) error {
 }
 
 // AuditLog returns an event's audit entries, oldest first.
-func (s *Store) AuditLog(ctx context.Context, eventID string) ([]AuditEntry, error) {
+func (s Queries) AuditLog(ctx context.Context, eventID string) ([]AuditEntry, error) {
 	rows, err := s.db.QueryContext(ctx,
 		"SELECT id, event_id, actor_id, action, target, COALESCE(detail, ''), at FROM audit_log WHERE event_id = ? ORDER BY at, rowid",
 		eventID)

@@ -47,15 +47,19 @@ func main() {
 		log.Fatalf("session secret: %v", err)
 	}
 
+	app, err := server.New(server.Config{
+		Store:         st,
+		EventID:       event.ID,
+		AdminKey:      adminKey,
+		SessionSecret: secret,
+		Static:        web.Dist(),
+	})
+	if err != nil {
+		log.Fatalf("start server: %v", err)
+	}
 	srv := &http.Server{
-		Addr: addr,
-		Handler: server.New(server.Config{
-			Store:         st,
-			EventID:       event.ID,
-			AdminKey:      adminKey,
-			SessionSecret: secret,
-			Static:        web.Dist(),
-		}),
+		Addr:              addr,
+		Handler:           app,
 		ReadHeaderTimeout: 10 * time.Second,
 	}
 
@@ -73,6 +77,9 @@ func main() {
 	if err := srv.Shutdown(shutdownCtx); err != nil {
 		log.Printf("shutdown: %v", err)
 	}
+	// Shutdown doesn't track hijacked WebSocket connections; closing the app
+	// disconnects them and stops the hub before the database closes.
+	app.Close()
 }
 
 // sessionSecret returns UNCONF_SESSION_SECRET, or a random secret generated

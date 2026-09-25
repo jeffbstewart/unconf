@@ -1,0 +1,156 @@
+package store
+
+import (
+	"context"
+	"errors"
+	"testing"
+	"time"
+
+	"github.com/jeffbstewart/unconf/internal/domain"
+)
+
+func seedUser(t *testing.T, s *Store, eventID, name string) User {
+	t.Helper()
+	u := User{ID: domain.NewID(), EventID: eventID, Name: name, Role: domain.RoleParticipant, CreatedAt: domain.Timestamp(time.Now())}
+	if err := s.CreateUser(context.Background(), u); err != nil {
+		t.Fatal(err)
+	}
+	return u
+}
+
+func TestNoteCRUD(t *testing.T) {
+	ctx := context.Background()
+	s, _ := openTemp(t)
+	ev, _ := s.EnsureDefaultEvent(ctx, "E")
+	u := seedUser(t, s, ev.ID, "Ada")
+	now := domain.Timestamp(time.Now())
+	n := Note{ID: domain.NewID(), EventID: ev.ID, AuthorID: u.ID, Title: "T", X: 1.5, Y: -2, Color: "blue", CreatedAt: now, UpdatedAt: now}
+	if err := s.InsertNote(ctx, n); err != nil {
+		t.Fatal(err)
+	}
+	got, err := s.NoteByID(ctx, n.ID)
+	if err != nil || got != n {
+		t.Fatalf("NoteByID: %+v, %v", got, err)
+	}
+
+	if err := s.UpdateNoteContent(ctx, n.ID, "T2", "body", "pink", "later"); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.MoveNote(ctx, n.ID, 100, 200); err != nil {
+		t.Fatal(err)
+	}
+	got, _ = s.NoteByID(ctx, n.ID)
+	if got.Title != "T2" || got.BodyMD != "body" || got.Color != "pink" || got.UpdatedAt != "later" || got.X != 100 || got.Y != 200 {
+		t.Fatalf("after update/move: %+v", got)
+	}
+
+	links := []domain.Link{{ID: "l1", Title: "A", URL: "https://a", Kind: "doc"}, {ID: "l2", Title: "B", URL: "https://b", Kind: "other"}}
+	if err := s.ReplaceLinks(ctx, n.ID, links); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.ReplaceLinks(ctx, n.ID, links[1:]); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := s.NoteLinks(ctx, n.ID); len(got) != 1 || got[0].ID != "l2" {
+		t.Fatalf("links after replace: %+v", got)
+	}
+	all, _ := s.EventLinks(ctx, ev.ID)
+	if len(all[n.ID]) != 1 {
+		t.Fatalf("EventLinks: %+v", all)
+	}
+
+	// Votes and stars feed facts and snapshot aggregates.
+	s.db.ExecContext(ctx, "INSERT INTO votes (id, user_id, note_id, cast_at) VALUES ('v1', ?, ?, ?), ('v2', ?, ?, ?)", u.ID, n.ID, now, u.ID, n.ID, now)
+	s.db.ExecContext(ctx, "INSERT INTO stars (user_id, note_id) VALUES (?, ?)", u.ID, n.ID)
+	if f, _ := s.NoteFacts(ctx, got); f.Votes != 2 || f.Assignments != 0 || f.AuthorID != u.ID || f.Hidden {
+		t.Fatalf("facts: %+v", f)
+	}
+	if tot, _ := s.VoteTotals(ctx, ev.ID); tot[n.ID] != 2 {
+		t.Fatalf("totals: %v", tot)
+	}
+	if mine, _ := s.UserVotes(ctx, u.ID); mine[n.ID] != 2 {
+		t.Fatalf("user votes: %v", mine)
+	}
+	if stars, _ := s.UserStars(ctx, u.ID); !stars[n.ID] {
+		t.Fatalf("stars: %v", stars)
+	}
+
+	if err := s.HideNote(ctx, n.ID, u.ID, now); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := s.NoteByID(ctx, n.ID); !got.Hidden() || got.HiddenBy != u.ID {
+		t.Fatalf("hide: %+v", got)
+	}
+
+	// Deleting cascades to links, votes, and stars.
+	if err := s.DeleteNote(ctx, n.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.NoteByID(ctx, n.ID); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("after delete: %v", err)
+	}
+	for _, table := range []string{"note_links", "votes", "stars"} {
+		var c int
+		s.db.QueryRowContext(ctx, "SELECT COUNT(*) FROM "+table).Scan(&c)
+		if c != 0 {
+			t.Errorf("%s not cascaded: %d rows", table, c)
+		}
+	}
+	if err := s.DeleteNote(ctx, n.ID); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("second delete: %v", err)
+	}
+}
+
+func TestSeqAndLifecycle(t *testing.T) {
+	ctx := context.Background()
+	s, _ := openTemp(t)
+	if seq, err := s.Seq(ctx); err != nil || seq != 0 {
+		t.Fatalf("initial seq %d %v", seq, err)
+	}
+	if err := s.InTx(ctx, func(tx Tx) error { return tx.SetSeq(ctx, 42) }); err != nil {
+		t.Fatal(err)
+	}
+	if seq, _ := s.Seq(ctx); seq != 42 {
+		t.Fatalf("seq %d", seq)
+	}
+	// A failed transaction leaves nothing behind.
+	boom := errors.New("boom")
+	if err := s.InTx(ctx, func(tx Tx) error { tx.SetSeq(ctx, 99); return boom }); !errors.Is(err, boom) {
+		t.Fatal(err)
+	}
+	if seq, _ := s.Seq(ctx); seq != 42 {
+		t.Fatalf("rolled-back seq leaked: %d", seq)
+	}
+
+	ev, _ := s.EnsureDefaultEvent(ctx, "E")
+	if err := s.SetLifecycle(ctx, ev.ID, domain.LifecycleActive); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := s.Event(ctx, ev.ID); got.Lifecycle != "active" {
+		t.Fatalf("lifecycle %q", got.Lifecycle)
+	}
+}
+
+func TestSnapshotQueriesOnEmptyEvent(t *testing.T) {
+	ctx := context.Background()
+	s, _ := openTemp(t)
+	ev, _ := s.EnsureDefaultEvent(ctx, "E")
+	if _, err := s.Regions(ctx, ev.ID); err != nil {
+		t.Error(err)
+	}
+	if w, err := s.Waves(ctx, ev.ID); err != nil || len(w) != 0 {
+		t.Error(w, err)
+	}
+	if _, err := s.Rooms(ctx, ev.ID); err != nil {
+		t.Error(err)
+	}
+	if _, err := s.Assignments(ctx, ev.ID); err != nil {
+		t.Error(err)
+	}
+	if _, err := s.Messages(ctx, ev.ID); err != nil {
+		t.Error(err)
+	}
+	if u, err := s.Users(ctx, ev.ID); err != nil || len(u) != 0 {
+		t.Error(u, err)
+	}
+}

@@ -33,7 +33,37 @@ UNCONF_ADMIN_KEY=choose-a-secret ./bin/unconf   # serves the app on :8080
 
 ```sh
 make test    # go vet + go test, then tsc + vitest
+UNCONF_LOAD_TEST=1 go test -run TestLoadSanity -v ./internal/server   # full load test: 300 clients × 30 s
 ```
+
+`make test` includes a short load test (50 WebSocket clients for 3 s). The
+full SPEC §14 load (300 clients each moving a note once a second for 30 s,
+asserting no dropped events and p99 broadcast latency under 250 ms) is
+opt-in because it takes about 30 seconds.
+
+### Manual two-window walkthrough
+
+Run `make dev`, then open http://localhost:5173 in two browser windows, one
+of them private or in another browser so each has its own cookie.
+
+**Board (milestone 3)**
+
+1. Window A: log in as `Olga` with admin key `dev`. The top bar shows
+   *Organizer* and the event in *Setup*.
+2. Window B: log in as `Ada`. The page says the event has not started.
+3. A: **Start event** → confirm. B switches to the board by itself.
+4. B: double-click the board, type a title, press Enter. The note appears
+   in A. Use **+ New session** for a second note.
+5. A: drag B's note around. B sees it move live.
+6. B: drop one note onto the other. It is nudged to the nearest free spot,
+   at the same position in both windows.
+7. Double-click a note → the detail modal. As its author (B), **Edit**:
+   add Markdown (e.g. a list and a table), a link, and a color, then save.
+   A sees the changes. A non-author participant gets no Edit button.
+8. Pan (drag the background or scroll), zoom (ctrl/⌘ + scroll or pinch),
+   **Fit all**. Reload: the camera is where you left it.
+9. Stop `make dev` (Ctrl-C) and start it again. Both windows show an amber
+   dot while disconnected, then reconnect with the board intact.
 
 ## Schema changes
 

@@ -5,8 +5,8 @@ import (
 	"encoding/json"
 	"io/fs"
 	"net/http"
-	"net/http/httptest"
 	"net/http/cookiejar"
+	"net/http/httptest"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -19,6 +19,11 @@ const testAdminKey = "sesame"
 
 func newTestServer(t *testing.T, static fs.FS) *Server {
 	t.Helper()
+	return newTestServerRing(t, static, 0)
+}
+
+func newTestServerRing(t *testing.T, static fs.FS, ringSize int) *Server {
+	t.Helper()
 	ctx := context.Background()
 	st, err := store.Open(ctx, filepath.Join(t.TempDir(), "test.db"))
 	if err != nil {
@@ -29,13 +34,19 @@ func newTestServer(t *testing.T, static fs.FS) *Server {
 	if err != nil {
 		t.Fatal(err)
 	}
-	return New(Config{
+	s, err := New(Config{
 		Store:         st,
 		EventID:       ev.ID,
 		AdminKey:      testAdminKey,
 		SessionSecret: []byte("test-secret"),
 		Static:        static,
+		RingSize:      ringSize,
 	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(s.Close)
+	return s
 }
 
 // client is a browser stand-in with its own cookie jar.
@@ -241,7 +252,7 @@ func TestSessionCookie(t *testing.T) {
 		t.Fatalf("valid cookie: %d", got)
 	}
 	// Forging a cookie for another id without the secret fails.
-	forged := New(Config{SessionSecret: []byte("other")}).signSession(id)
+	forged := (&Server{cfg: Config{SessionSecret: []byte("other")}}).signSession(id)
 	idPart, _, _ := strings.Cut(s.signSession("someone-else"), ".")
 	_, macPart, _ := strings.Cut(s.signSession(id), ".")
 	for name, v := range map[string]string{
