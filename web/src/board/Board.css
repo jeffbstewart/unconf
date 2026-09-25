@@ -345,3 +345,51 @@ button.toggled:hover:not(:disabled) {
 .region-swatch.selected {
   border-color: #1f2328;
 }
+
+/* Votes */
+
+.votes {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  font-size: 13px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.vote-count {
+  padding: 1px 7px;
+  border-radius: 8px;
+  background: rgb(255 255 255 / 0.6);
+  white-space: nowrap;
+}
+
+.votes-mine .vote-count {
+  background: #1f6feb;
+  color: #fff;
+}
+
+.vote-btn {
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border-radius: 50%;
+  font-weight: 700;
+  line-height: 1;
+}
+
+.votes-compact {
+  font-size: 11px;
+}
+
+.votes-compact .vote-btn {
+  width: 18px;
+  height: 18px;
+  font-size: 12px;
+  opacity: 0;
+}
+
+.sticky:hover .votes-compact .vote-btn,
+.sticky:focus-within .votes-compact .vote-btn {
+  opacity: 1;
+}

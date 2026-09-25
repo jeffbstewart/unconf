@@ -77,3 +77,35 @@
 @keyframes conn-pulse {
   to { opacity: 0.35; }
 }
+
+.topbar-tabs {
+  display: flex;
+  gap: 2px;
+  margin-left: 8px;
+}
+
+.topbar-tabs a {
+  padding: 5px 10px;
+  border-radius: 6px;
+  color: #57606a;
+  font-size: 14px;
+  font-weight: 600;
+  text-decoration: none;
+}
+
+.topbar-tabs a:hover {
+  background: #f3f2ee;
+}
+
+.topbar-tabs a[aria-current='page'] {
+  background: #eaeef2;
+  color: #1f2328;
+}
+
+.topbar-votes {
+  padding: 3px 10px;
+  border-radius: 999px;
+  background: #ddf4ff;
+  color: #0550ae;
+  font-size: 13px;
+}

@@ -208,3 +208,49 @@ func TestRegionsAndStars(t *testing.T) {
 		}
 	}
 }
+
+func TestVotes(t *testing.T) {
+	ctx := context.Background()
+	s, _ := openTemp(t)
+	ev, _ := s.EnsureDefaultEvent(ctx, "E")
+	u := seedUser(t, s, ev.ID, "Ada")
+	s.InsertNote(ctx, Note{ID: "n", EventID: ev.ID, AuthorID: u.ID, Title: "T", Color: "yellow", CreatedAt: "t", UpdatedAt: "t"})
+	for i, id := range []string{"v1", "v2", "v3"} {
+		if err := s.CastVote(ctx, id, u.ID, "n", "t"); err != nil {
+			t.Fatal(err)
+		}
+		if n, _ := s.NoteVoteTotal(ctx, "n"); n != i+1 {
+			t.Fatalf("total %d after %d casts", n, i+1)
+		}
+	}
+	if used, _ := s.VotesCast(ctx, u.ID); used != 3 {
+		t.Fatalf("used %d", used)
+	}
+	if ok, err := s.RetractVote(ctx, u.ID, "n"); !ok || err != nil {
+		t.Fatal(ok, err)
+	}
+	var left []string
+	rows, _ := s.db.QueryContext(ctx, "SELECT id FROM votes ORDER BY rowid")
+	for rows.Next() {
+		var id string
+		rows.Scan(&id)
+		left = append(left, id)
+	}
+	rows.Close()
+	if len(left) != 2 || left[1] != "v2" {
+		t.Fatalf("retract should remove the newest dot: %v", left)
+	}
+	if ok, _ := s.RetractVote(ctx, "someone-else", "n"); ok {
+		t.Fatal("retracting without a vote there should report false")
+	}
+
+	if err := s.SetVotingOpen(ctx, ev.ID, true); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.SetVotesPerUser(ctx, ev.ID, 9); err != nil {
+		t.Fatal(err)
+	}
+	if e, _ := s.Event(ctx, ev.ID); !e.VotingOpen || e.VotesPerUser != 9 {
+		t.Fatalf("event: %+v", e)
+	}
+}

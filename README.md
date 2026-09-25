@@ -84,6 +84,21 @@ of them private or in another browser so each has its own cookie.
 6. B: turn on **⊞ Snap** and drag a note. It lands on the 20-unit grid. A,
    with snap off, can still place notes anywhere.
 
+**Voting (milestone 5)**
+
+1. A (organizer): open the **Admin** tab, set *Votes per person* to 3, and
+   **Open voting**. B's top bar shows *3 / 3 votes left*.
+2. B: hover a note and click **+** (or use the buttons in the note's modal
+   or in the list view). A sees the tally change live. B's own dots are
+   highlighted, and the budget counts down.
+3. B: spend every vote. **+** turns disabled, and the server rejects extra
+   votes anyway. **−** gives a vote back.
+4. B: in **List** with *Ranking (votes)*, notes reorder live as votes come
+   in.
+5. A: **Close voting**. B's vote buttons and budget disappear, while the
+   tallies stay. Change the budget and reopen: B's remaining count reflects
+   the new budget.
+
 ## Schema changes
 
 The database schema is built entirely from numbered SQL fragments in

@@ -18,7 +18,8 @@ export interface BoardState {
   rooms: Room[];
   assignments: Assignment[];
   messages: Record<string, Message[]>;
-  votesRemaining: number;
+  /** Vote dots this user has placed (see votesRemaining). */
+  votesUsed: number;
 }
 
 export const initialBoard: BoardState = {
@@ -33,8 +34,13 @@ export const initialBoard: BoardState = {
   rooms: [],
   assignments: [],
   messages: {},
-  votesRemaining: 0,
+  votesUsed: 0,
 };
+
+/** Votes the user may still cast. Over budget (after a cut) reads as 0. */
+export function votesRemaining(s: Pick<BoardState, 'event' | 'votesUsed'>): number {
+  return Math.max(0, (s.event?.votesPerUser ?? 0) - s.votesUsed);
+}
 
 function byId<T extends { id: string }>(items: T[]): Record<string, T> {
   return Object.fromEntries(items.map((i) => [i.id, i]));
@@ -59,7 +65,7 @@ export function applyFrame(s: BoardState, f: ServerFrame): BoardState {
         rooms: st.rooms,
         assignments: st.assignments,
         messages: st.messages,
-        votesRemaining: st.me.votesRemaining,
+        votesUsed: st.me.votesUsed,
       };
     }
     case 'event':
@@ -96,6 +102,8 @@ export function applyEvent(s: BoardState, e: BoardEvent): BoardState {
         notes,
         messages,
         assignments: s.assignments.filter((a) => a.noteId !== e.noteId),
+        // The note's votes were deleted with it, refunding ours.
+        votesUsed: Math.max(0, s.votesUsed - s.notes[e.noteId].myVotes),
       };
     }
     case 'links_set':
@@ -122,6 +130,21 @@ export function applyEvent(s: BoardState, e: BoardEvent): BoardState {
       return patchNote(s, e.noteId, { starred: true });
     case 'note_unstarred':
       return patchNote(s, e.noteId, { starred: false });
+    case 'vote_cast':
+    case 'vote_retracted': {
+      const n = s.notes[e.noteId];
+      if (!n) return s;
+      const mine = e.byUserId === s.you?.id;
+      const delta = e.kind === 'vote_cast' ? 1 : -1;
+      return {
+        ...patchNote(s, e.noteId, { voteTotal: e.total, myVotes: mine ? n.myVotes + delta : n.myVotes }),
+        votesUsed: mine ? s.votesUsed + delta : s.votesUsed,
+      };
+    }
+    case 'voting_set':
+      return s.event ? { ...s, event: { ...s.event, votingOpen: e.open } } : s;
+    case 'votes_per_user_set':
+      return s.event ? { ...s, event: { ...s.event, votesPerUser: e.n } } : s;
     default:
       return s; // kinds from later milestones
   }

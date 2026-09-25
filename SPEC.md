@@ -427,8 +427,8 @@ failures (voting closed, wave not open, lifecycle) → `not_allowed_now`.
 | `move_note` | `{noteId, x, y}` | any; note must be unhidden; requested position is overlap-resolved by the server (§9); throttle: server coalesces to ≤ 20 moves/s per note |
 | `delete_note` | `{noteId}` | author (only if note has 0 votes and 0 assignments), or mods+ always |
 | `set_links` | `{noteId, links: [{title,url,kind}]}` | author or mods+ (full replace) |
-| `cast_vote` | `{noteId}` | any, `voting_open`, budget remaining |
-| `retract_vote` | `{noteId}` | any, `voting_open`, has a vote there |
+| `cast_vote` | `{noteId}` | any who may interact (lifecycle as `create_note`), `voting_open`, note not hidden, budget remaining — out of budget → `not_allowed_now` |
+| `retract_vote` | `{noteId}` | same gating; removes the user's newest dot there; no dot there → `bad_request` |
 | `star_note` / `unstar_note` | `{noteId}` | any, in every lifecycle (participants excepted during `setup`, when they can't see the board); stars are personal — resulting events reach only the acting user's connections; starring an already-starred note is a no-op (ack, no event) |
 | `post_message` | `{noteId, body, threadId?}` | any, lifecycle `active`; `threadId` must reference a root message on the same note |
 | `hide_message` / `unhide_message` | `{messageId}` | mods+ |
@@ -436,8 +436,8 @@ failures (voting closed, wave not open, lifecycle) → `not_allowed_now`.
 | `create_region` | `{label, x, y, w, h, color, z?}` | mods+ |
 | `update_region` | `{regionId, label?, x?, y?, w?, h?, color?, z?}` | mods+ |
 | `delete_region` | `{regionId}` | mods+ |
-| `set_voting` | `{open: bool}` | organizer |
-| `set_votes_per_user` | `{n}` (1–20) | organizer |
+| `set_voting` | `{open: bool}` | organizer, not once `done`; setting the current value is a no-op (ack, no event) |
+| `set_votes_per_user` | `{n}` (1–20) | organizer, not once `done`; lowering it keeps dots already placed (those users just can't add more) |
 | `set_lifecycle` | `{lifecycle}` | organizer, forward-only |
 | `create_wave` / `update_wave` | `{name, opensAt?}` / `{waveId, ...}` | organizer |
 | `set_wave_status` | `{waveId, status}` | organizer, forward-only, ≤ 1 wave `open` |
@@ -478,7 +478,10 @@ Moderation events are role-split at fan-out:
   moderators+ include them with `hidden: true`.
 
 Vote events carry the new per-note `total` so clients never count rows.
-`byUserId` lets a client update its own remaining budget.
+`byUserId` lets a client update its own remaining budget: clients keep
+`votesUsed` (from the snapshot) and derive remaining as
+`max(0, votesPerUser − votesUsed)`, so budget changes apply without a new
+snapshot. A deleted note's votes are deleted with it, refunding its voters.
 
 `note_starred` / `note_unstarred` are personal: they are delivered only to the
 acting user's own connections. Other clients simply see a seq gap (already
@@ -502,7 +505,7 @@ optimistic position to them.
   "rooms":   [ {"id","name","meetUrl"} ],
   "assignments": [ {"id","noteId","slotId","roomId"} ],
   "messages": { "<noteId>": [ {"id","authorId","threadId","body","hidden"?,"createdAt"} ] },
-  "me":      { "votesRemaining": n }
+  "me":      { "votesRemaining": n, "votesUsed": n }   // votesUsed counts every dot, incl. on notes hidden from this user
 }
 ```
 
@@ -617,7 +620,7 @@ hidden rows entirely)`.
 2. **Board** (default) — the whiteboard.
 3. **Schedule** — per-wave slot×room grids; organizers get the editing view
    with the unscheduled pool; everyone else a read-only published view.
-4. **Admin** — organizer: lifecycle, voting toggle + budget, waves/slots/rooms,
+4. **Admin** (`#/admin`, tab in the top bar) — organizer: lifecycle, voting toggle + budget, waves/slots/rooms,
    user roles. Moderator: hidden-items list (unhide from here), audit log.
 
 Top bar: event name, view tabs, connection indicator (green/amber during

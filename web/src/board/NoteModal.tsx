@@ -4,6 +4,7 @@ import remarkGfm from 'remark-gfm';
 import { NOTE_COLORS, type LinkKind, type Note, type NoteColor } from '../api/protocol';
 import { canEditNote, canInteract, useStore } from '../store/store';
 import { StarButton } from './Sticky';
+import { VoteControl } from './VoteControl';
 import './NoteModal.css';
 
 const LINK_ICONS: Record<LinkKind, string> = { doc: '📄', slides: '📊', other: '🔗' };
@@ -60,8 +61,8 @@ export function NoteModal({ note, onClose }: Props) {
                   <span className="swatch-dot" style={{ background: region.color }} /> {region.label}
                 </>
               )}
-              {note.voteTotal > 0 && ` · ${note.voteTotal} vote${note.voteTotal === 1 ? '' : 's'}`}
             </p>
+            <VoteControl note={note} />
             {note.hidden && <p className="note-modal-hidden">Hidden by a moderator — participants can't see this note.</p>}
             <div className="note-modal-body markdown">
               {note.bodyMd.trim() ? (

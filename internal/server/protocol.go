@@ -128,6 +128,7 @@ type snapshotJSON struct {
 	Messages    map[string][]messageJSON `json:"messages"`
 	Me          struct {
 		VotesRemaining int `json:"votesRemaining"`
+		VotesUsed      int `json:"votesUsed"`
 	} `json:"me"`
 }
 

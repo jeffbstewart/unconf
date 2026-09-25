@@ -202,3 +202,21 @@
 .modal-star.starred {
   color: #d4a72c;
 }
+
+.note-modal .votes {
+  margin: 0 0 12px;
+  font-size: 15px;
+}
+
+.note-modal .vote-btn {
+  width: 28px;
+  height: 28px;
+}
+
+.note-modal .vote-count {
+  background: #eaeef2;
+}
+
+.note-modal .votes-mine .vote-count {
+  background: #1f6feb;
+}

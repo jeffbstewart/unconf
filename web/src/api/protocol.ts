@@ -110,7 +110,7 @@ export interface Snapshot {
   rooms: Room[];
   assignments: Assignment[];
   messages: Record<string, Message[]>;
-  me: { votesRemaining: number };
+  me: { votesRemaining: number; votesUsed: number };
 }
 
 /** Events the client applies. Unknown kinds (from later milestones) are ignored. */
@@ -128,7 +128,11 @@ export type BoardEvent =
   | { kind: 'region_deleted'; regionId: string }
   | { kind: 'note_retagged'; noteId: string; regionId: string | null }
   | { kind: 'note_starred'; noteId: string }
-  | { kind: 'note_unstarred'; noteId: string };
+  | { kind: 'note_unstarred'; noteId: string }
+  | { kind: 'vote_cast'; noteId: string; byUserId: string; total: number }
+  | { kind: 'vote_retracted'; noteId: string; byUserId: string; total: number }
+  | { kind: 'voting_set'; open: boolean }
+  | { kind: 'votes_per_user_set'; n: number };
 
 export type ServerFrame =
   | { type: 'hello'; you: User; eventSeq: number }
@@ -162,5 +166,9 @@ export interface Commands {
   delete_region: { regionId: string };
   star_note: { noteId: string };
   unstar_note: { noteId: string };
+  cast_vote: { noteId: string };
+  retract_vote: { noteId: string };
+  set_voting: { open: boolean };
+  set_votes_per_user: { n: number };
 }
 export type CommandName = keyof Commands;

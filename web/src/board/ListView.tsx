@@ -2,6 +2,7 @@ import type { Note } from '../api/protocol';
 import { useStore } from '../store/store';
 import { groupByRegion, matches, sortNotes, useView } from '../store/view';
 import { StarButton } from './Sticky';
+import { VoteControl } from './VoteControl';
 import './ListView.css';
 
 /** The board as a list: grouped by region, ordered by the personal sort. */
@@ -48,9 +49,7 @@ export function ListView({ onOpen }: { onOpen: (noteId: string) => void }) {
                 <span className="list-meta">{users[n.authorId]?.name ?? '?'}</span>
                 {n.hidden && <span className="sticky-flag">hidden</span>}
                 {n.scheduled && <span className="list-badge">scheduled</span>}
-                <span className="list-votes" title="Votes">
-                  ● {n.voteTotal}
-                </span>
+                <VoteControl note={n} />
               </li>
             ))}
           </ol>
