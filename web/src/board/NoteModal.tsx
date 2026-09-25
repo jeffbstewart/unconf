@@ -3,6 +3,7 @@ import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { NOTE_COLORS, type LinkKind, type Note, type NoteColor } from '../api/protocol';
 import { canEditNote, canInteract, useStore } from '../store/store';
+import { StarButton } from './Sticky';
 import './NoteModal.css';
 
 const LINK_ICONS: Record<LinkKind, string> = { doc: '📄', slides: '📊', other: '🔗' };
@@ -20,6 +21,8 @@ interface Props {
 
 export function NoteModal({ note, onClose }: Props) {
   const author = useStore((s) => s.users[note.authorId]);
+  const region = useStore((s) => s.regions.find((r) => r.id === note.regionId));
+  const send = useStore((s) => s.send);
   const mayEdit = useStore((s) => canInteract(s) && canEditNote(s, note.authorId));
   const [editing, setEditing] = useState(false);
 
@@ -40,12 +43,23 @@ export function NoteModal({ note, onClose }: Props) {
           <>
             <header className="note-modal-header">
               <h2>{note.title}</h2>
+              <StarButton
+                note={note}
+                className="modal-star"
+                onStar={(n) => send(n.starred ? 'unstar_note' : 'star_note', { noteId: n.id }).catch(() => {})}
+              />
               <button className="icon" onClick={onClose} aria-label="Close">
                 ✕
               </button>
             </header>
             <p className="note-modal-meta">
               Proposed by {author?.name ?? 'unknown'}
+              {region && (
+                <>
+                  {' · '}
+                  <span className="swatch-dot" style={{ background: region.color }} /> {region.label}
+                </>
+              )}
               {note.voteTotal > 0 && ` · ${note.voteTotal} vote${note.voteTotal === 1 ? '' : 's'}`}
             </p>
             {note.hidden && <p className="note-modal-hidden">Hidden by a moderator — participants can't see this note.</p>}

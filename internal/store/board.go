@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"database/sql"
+	"errors"
 
 	"github.com/jeffbstewart/unconf/internal/domain"
 )
@@ -13,6 +14,7 @@ type Region struct {
 	X, Y, W, H         float64
 	Color              string
 	Z                  int
+	Order              int64 // creation rank (rowid); breaks containment z ties
 }
 
 // Wave is one scheduling round with its slots.
@@ -123,12 +125,49 @@ func (s Queries) UserStars(ctx context.Context, userID string) (map[string]bool,
 	return m, err
 }
 
-// Regions lists an event's regions.
+const regionColumns = "id, event_id, label, x, y, w, h, color, z, rowid"
+
+func scanRegion(r interface{ Scan(...any) error }) (Region, error) {
+	var x Region
+	err := r.Scan(&x.ID, &x.EventID, &x.Label, &x.X, &x.Y, &x.W, &x.H, &x.Color, &x.Z, &x.Order)
+	if errors.Is(err, sql.ErrNoRows) {
+		return Region{}, ErrNotFound
+	}
+	return x, err
+}
+
+// Regions lists an event's regions, oldest first.
 func (s Queries) Regions(ctx context.Context, eventID string) ([]Region, error) {
-	return collect(ctx, s.db, func(r *sql.Rows) (Region, error) {
-		var x Region
-		return x, r.Scan(&x.ID, &x.EventID, &x.Label, &x.X, &x.Y, &x.W, &x.H, &x.Color, &x.Z)
-	}, "SELECT id, event_id, label, x, y, w, h, color, z FROM regions WHERE event_id = ? ORDER BY rowid", eventID)
+	return collect(ctx, s.db, func(r *sql.Rows) (Region, error) { return scanRegion(r) },
+		"SELECT "+regionColumns+" FROM regions WHERE event_id = ? ORDER BY rowid", eventID)
+}
+
+// RegionByID loads one region.
+func (s Queries) RegionByID(ctx context.Context, id string) (Region, error) {
+	return scanRegion(s.db.QueryRowContext(ctx, "SELECT "+regionColumns+" FROM regions WHERE id = ?", id))
+}
+
+// InsertRegion stores a new region and returns it with its Order set.
+func (s Queries) InsertRegion(ctx context.Context, r Region) (Region, error) {
+	res, err := s.db.ExecContext(ctx,
+		"INSERT INTO regions (id, event_id, label, x, y, w, h, color, z) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+		r.ID, r.EventID, r.Label, r.X, r.Y, r.W, r.H, r.Color, r.Z)
+	if err != nil {
+		return Region{}, err
+	}
+	r.Order, err = res.LastInsertId()
+	return r, err
+}
+
+// UpdateRegion rewrites a region's label, geometry, color, and z.
+func (s Queries) UpdateRegion(ctx context.Context, r Region) error {
+	return s.execOne(ctx, "UPDATE regions SET label = ?, x = ?, y = ?, w = ?, h = ?, color = ?, z = ? WHERE id = ?",
+		r.Label, r.X, r.Y, r.W, r.H, r.Color, r.Z, r.ID)
+}
+
+// DeleteRegion removes a region. Notes tagged with it must be retagged first.
+func (s Queries) DeleteRegion(ctx context.Context, id string) error {
+	return s.execOne(ctx, "DELETE FROM regions WHERE id = ?", id)
 }
 
 // Waves lists an event's waves with their slots, in creation order.

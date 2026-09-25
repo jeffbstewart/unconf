@@ -3,6 +3,7 @@ package domain
 import (
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestRoleOrdering(t *testing.T) {
@@ -79,5 +80,21 @@ func TestNewID(t *testing.T) {
 	a, b := NewID(), NewID()
 	if a == b || len(a) != 26 || strings.ToLower(a) != a {
 		t.Fatalf("bad ids %q %q", a, b)
+	}
+}
+
+func TestTimestampSortsAsString(t *testing.T) {
+	base := time.Date(2026, 9, 25, 12, 0, 5, 0, time.FixedZone("EDT", -4*3600))
+	a := Timestamp(base.Add(100 * time.Millisecond))
+	b := Timestamp(base.Add(120 * time.Millisecond))
+	c := Timestamp(base.Add(time.Second))
+	if a != "2026-09-25T16:00:05.100Z" {
+		t.Fatalf("format: %s", a)
+	}
+	if !(a < b && b < c) {
+		t.Fatalf("not chronological as strings: %s %s %s", a, b, c)
+	}
+	if _, err := time.Parse(time.RFC3339, a); err != nil {
+		t.Fatalf("not RFC 3339: %v", err)
 	}
 }

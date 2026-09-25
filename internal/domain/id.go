@@ -18,7 +18,13 @@ func NewID() string {
 	return strings.ToLower(idEncoding.EncodeToString(b[:]))
 }
 
-// Timestamp formats t as the canonical stored form: UTC RFC 3339.
+// timestampLayout is RFC 3339 with fixed-width milliseconds, so stored
+// timestamps sort chronologically as plain strings (RFC3339Nano trims
+// trailing zeros and would not).
+const timestampLayout = "2006-01-02T15:04:05.000Z07:00"
+
+// Timestamp formats t as the canonical stored form: UTC RFC 3339 with
+// millisecond precision, e.g. 2026-09-25T12:00:00.000Z.
 func Timestamp(t time.Time) string {
-	return t.UTC().Format(time.RFC3339)
+	return t.UTC().Format(timestampLayout)
 }

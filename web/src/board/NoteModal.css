@@ -190,3 +190,15 @@
 .confirm {
   font-size: 14px;
 }
+
+.modal-star {
+  padding: 2px 6px;
+  border: 0;
+  background: none;
+  font-size: 20px;
+  color: #8c959f;
+}
+
+.modal-star.starred {
+  color: #d4a72c;
+}

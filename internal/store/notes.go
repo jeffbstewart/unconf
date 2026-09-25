@@ -90,6 +90,31 @@ func (s Queries) DeleteNote(ctx context.Context, id string) error {
 	return s.execOne(ctx, "DELETE FROM notes WHERE id = ?", id)
 }
 
+// SetNoteRegion tags a note with a region ("" clears the tag).
+func (s Queries) SetNoteRegion(ctx context.Context, id, regionID string) error {
+	return s.execOne(ctx, "UPDATE notes SET region_id = ? WHERE id = ?", nullIfEmpty(regionID), id)
+}
+
+// StarNote bookmarks a note for a user; it reports whether anything changed.
+func (s Queries) StarNote(ctx context.Context, userID, noteID string) (bool, error) {
+	res, err := s.db.ExecContext(ctx, "INSERT INTO stars (user_id, note_id) VALUES (?, ?) ON CONFLICT DO NOTHING", userID, noteID)
+	if err != nil {
+		return false, err
+	}
+	n, err := res.RowsAffected()
+	return n > 0, err
+}
+
+// UnstarNote removes a user's bookmark; it reports whether anything changed.
+func (s Queries) UnstarNote(ctx context.Context, userID, noteID string) (bool, error) {
+	res, err := s.db.ExecContext(ctx, "DELETE FROM stars WHERE user_id = ? AND note_id = ?", userID, noteID)
+	if err != nil {
+		return false, err
+	}
+	n, err := res.RowsAffected()
+	return n > 0, err
+}
+
 // HideNote marks a note hidden by a moderator.
 func (s Queries) HideNote(ctx context.Context, id, byUserID, at string) error {
 	return s.execOne(ctx, "UPDATE notes SET hidden_by = ?, hidden_at = ? WHERE id = ?", byUserID, at, id)

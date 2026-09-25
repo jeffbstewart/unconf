@@ -204,7 +204,8 @@ Makefile, README.md, SPEC.md, LICENSE
 SQLite schema, delivered as numbered fragments through the schema evolution
 mechanism (§7.1); the listing below is the logical result. All ids are server-generated opaque strings
 (`crypto/rand`, 16 bytes, base32 — sortable not required). Timestamps are UTC
-RFC-3339 strings.
+RFC-3339 strings with fixed-width milliseconds (`2026-09-25T12:00:00.000Z`),
+so they sort chronologically as plain strings.
 
 ```sql
 CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
@@ -428,7 +429,7 @@ failures (voting closed, wave not open, lifecycle) → `not_allowed_now`.
 | `set_links` | `{noteId, links: [{title,url,kind}]}` | author or mods+ (full replace) |
 | `cast_vote` | `{noteId}` | any, `voting_open`, budget remaining |
 | `retract_vote` | `{noteId}` | any, `voting_open`, has a vote there |
-| `star_note` / `unstar_note` | `{noteId}` | any; stars are personal — resulting events reach only the acting user's connections |
+| `star_note` / `unstar_note` | `{noteId}` | any, in every lifecycle (participants excepted during `setup`, when they can't see the board); stars are personal — resulting events reach only the acting user's connections; starring an already-starred note is a no-op (ack, no event) |
 | `post_message` | `{noteId, body, threadId?}` | any, lifecycle `active`; `threadId` must reference a root message on the same note |
 | `hide_message` / `unhide_message` | `{messageId}` | mods+ |
 | `hide_note` / `unhide_note` | `{noteId}` | mods+ |
@@ -521,6 +522,11 @@ optimistic position to them.
     of the event (≤ a few hundred; trivial).
 - Changes emit `note_retagged` events. `region_id` feeds personal filters,
   the grouped list view, and the spreadsheet export's "Region" column.
+- Regions have a 1–60 character label, a `#rrggbb` tint, and a size of at
+  least 100×100 board units. A region-edit command emits its
+  `region_created|updated|deleted` event first, then one `note_retagged` per
+  note whose tag changed, in note-id order. Hidden notes are retagged too,
+  but only moderators receive their events.
 
 ### Sticky non-overlap
 
@@ -644,7 +650,8 @@ The top bar also shows the event's lifecycle; organizers advance it there
   persisted in `localStorage`, never sent to the server (stars being the one
   server-stored — but still private — piece).
 - **List view** toggle: same data grouped by region and ordered by the chosen
-  sort — useful during voting and for accessibility.
+  sort — useful during voting and for accessibility. Groups follow the board's
+  reading order (top to bottom, then left to right), with untagged notes last.
 
 ### Voting
 

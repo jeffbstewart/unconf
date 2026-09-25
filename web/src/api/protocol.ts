@@ -9,6 +9,10 @@ export type LinkKind = 'doc' | 'slides' | 'other';
 export const NOTE_COLORS: NoteColor[] = ['yellow', 'pink', 'blue', 'green', 'orange', 'purple'];
 export const NOTE_W = 180;
 export const NOTE_H = 120;
+/** Board grid (and snap) step, in board units. */
+export const GRID = 20;
+/** Smallest region the server accepts, in board units. */
+export const MIN_REGION = 100;
 
 export interface User {
   id: string;
@@ -118,7 +122,13 @@ export type BoardEvent =
   | { kind: 'links_set'; noteId: string; links: Link[] }
   | { kind: 'user_joined'; user: User }
   | { kind: 'role_set'; userId: string; role: Role }
-  | { kind: 'lifecycle_set'; lifecycle: Lifecycle };
+  | { kind: 'lifecycle_set'; lifecycle: Lifecycle }
+  | { kind: 'region_created'; region: Region }
+  | { kind: 'region_updated'; region: Region }
+  | { kind: 'region_deleted'; regionId: string }
+  | { kind: 'note_retagged'; noteId: string; regionId: string | null }
+  | { kind: 'note_starred'; noteId: string }
+  | { kind: 'note_unstarred'; noteId: string };
 
 export type ServerFrame =
   | { type: 'hello'; you: User; eventSeq: number }
@@ -138,5 +148,19 @@ export interface Commands {
   delete_note: { noteId: string };
   set_links: { noteId: string; links: { title: string; url: string; kind: LinkKind }[] };
   set_lifecycle: { lifecycle: Lifecycle };
+  create_region: { label: string; x: number; y: number; w: number; h: number; color: string; z?: number };
+  update_region: {
+    regionId: string;
+    label?: string;
+    x?: number;
+    y?: number;
+    w?: number;
+    h?: number;
+    color?: string;
+    z?: number;
+  };
+  delete_region: { regionId: string };
+  star_note: { noteId: string };
+  unstar_note: { noteId: string };
 }
 export type CommandName = keyof Commands;

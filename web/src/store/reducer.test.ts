@@ -126,3 +126,31 @@ describe('applyFrame', () => {
     expect(applyFrame(s, { type: 'pong' })).toBe(s);
   });
 });
+
+describe('regions and stars', () => {
+  const region = { id: 'r1', label: 'Track A', x: 0, y: 0, w: 400, h: 300, color: '#f2d45c', z: 0 };
+
+  it('creates, updates, and deletes regions', () => {
+    let s = loaded();
+    s = applyFrame(s, { type: 'event', seq: 11, event: { kind: 'region_created', region } });
+    expect(s.regions).toEqual([region]);
+    s = applyFrame(s, { type: 'event', seq: 12, event: { kind: 'region_updated', region: { ...region, label: 'B' } } });
+    expect(s.regions[0].label).toBe('B');
+    s = applyFrame(s, { type: 'event', seq: 13, event: { kind: 'region_deleted', regionId: 'r1' } });
+    expect(s.regions).toEqual([]);
+  });
+
+  it('retags notes', () => {
+    let s = applyFrame(loaded(), { type: 'event', seq: 11, event: { kind: 'note_retagged', noteId: 'n1', regionId: 'r1' } });
+    expect(s.notes.n1.regionId).toBe('r1');
+    s = applyFrame(s, { type: 'event', seq: 12, event: { kind: 'note_retagged', noteId: 'n1', regionId: null } });
+    expect(s.notes.n1.regionId).toBeNull();
+  });
+
+  it('stars and unstars', () => {
+    let s = applyFrame(loaded(), { type: 'event', seq: 11, event: { kind: 'note_starred', noteId: 'n1' } });
+    expect(s.notes.n1.starred).toBe(true);
+    s = applyFrame(s, { type: 'event', seq: 12, event: { kind: 'note_unstarred', noteId: 'n1' } });
+    expect(s.notes.n1.starred).toBe(false);
+  });
+});

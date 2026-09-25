@@ -1,0 +1,119 @@
+.list-view {
+  flex: 1;
+  overflow: auto;
+  padding: 16px;
+}
+
+.list-empty {
+  text-align: center;
+  margin-top: 48px;
+}
+
+.list-group {
+  max-width: 880px;
+  margin: 0 auto 20px;
+}
+
+.list-group h2 {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0 0 6px;
+  font-size: 16px;
+}
+
+.list-count {
+  padding: 0 7px;
+  border-radius: 999px;
+  background: #eaeef2;
+  color: #57606a;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.list-group ol {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  border: 1px solid #e4e1d8;
+  border-radius: 8px;
+  background: #fff;
+}
+
+.list-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 12px;
+  border-top: 1px solid #f0eee8;
+}
+
+.list-row:first-child {
+  border-top: 0;
+}
+
+.list-row-dimmed {
+  opacity: 0.35;
+}
+
+.list-row-hidden .list-title {
+  text-decoration: line-through;
+}
+
+.list-color {
+  flex: none;
+  width: 12px;
+  height: 12px;
+  border-radius: 3px;
+  border: 1px solid rgb(0 0 0 / 0.1);
+}
+
+.list-title {
+  flex: 1;
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  background: none;
+  text-align: left;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.list-title:hover:not(:disabled) {
+  background: none;
+  text-decoration: underline;
+}
+
+.list-meta {
+  color: #57606a;
+  font-size: 13px;
+}
+
+.list-badge {
+  padding: 1px 7px;
+  border-radius: 999px;
+  background: #dafbe1;
+  color: #116329;
+  font-size: 12px;
+}
+
+.list-votes {
+  min-width: 36px;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  font-size: 13px;
+}
+
+.list-star {
+  padding: 0 2px;
+  border: 0;
+  background: none;
+  font-size: 16px;
+  color: #8c959f;
+}
+
+.list-star.starred {
+  color: #d4a72c;
+}
