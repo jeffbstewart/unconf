@@ -3,6 +3,7 @@ import { fetchMe, logout, type Me } from './api/http';
 import { Login } from './auth/Login';
 import { AdminPage } from './admin/AdminPage';
 import { BoardPage } from './board/BoardPage';
+import { VoteNotice } from './board/VoteNotice';
 import { useRoute } from './route';
 import { useStore } from './store/store';
 import { Toasts } from './Toasts';
@@ -67,6 +68,7 @@ function Workspace({ me, onLoggedOut }: { me: Me; onLoggedOut: () => void }) {
     <>
       <TopBar me={me} route={route} onLogout={handleLogout} />
       {body}
+      <VoteNotice />
       <Toasts />
     </>
   );

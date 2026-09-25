@@ -1,6 +1,7 @@
 import type { Note } from '../api/protocol';
 import { votesRemaining } from '../store/reducer';
 import { canInteract, useStore } from '../store/store';
+import { hasAcknowledged, useVoteNotice } from './voteNoticeState';
 
 interface Props {
   note: Note;
@@ -18,8 +19,16 @@ export function VoteControl({ note, compact }: Props) {
 
   const title =
     `${note.voteTotal} vote${note.voteTotal === 1 ? '' : 's'}` + (note.myVotes ? ` (${note.myVotes} yours)` : '');
+  const you = useStore((s) => s.you);
+  const askNotice = useVoteNotice((s) => s.ask);
   const vote = (cmd: 'cast_vote' | 'retract_vote') => (e: React.MouseEvent) => {
     e.stopPropagation();
+    // Before a user's first vote, explain that votes are public; nothing is
+    // sent until they confirm.
+    if (cmd === 'cast_vote' && you && !hasAcknowledged(you.id)) {
+      askNotice(note.id);
+      return;
+    }
     send(cmd, { noteId: note.id }).catch(() => {});
   };
   const stop = (e: React.SyntheticEvent) => e.stopPropagation();

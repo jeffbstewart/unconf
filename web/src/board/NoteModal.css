@@ -220,3 +220,16 @@
 .note-modal .votes-mine .vote-count {
   background: #1f6feb;
 }
+
+.vote-notice {
+  width: min(480px, 100%);
+}
+
+.vote-notice h2 {
+  margin: 0 0 8px;
+  font-size: 20px;
+}
+
+.vote-notice p {
+  line-height: 1.5;
+}

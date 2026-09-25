@@ -662,6 +662,17 @@ Dots on stickies; clicking + on a sticky (or in the modal) casts, − retracts.
 Budget shown in top bar; stacking multiple dots on one note allowed. When
 `voting_open` flips off, controls disable live.
 
+**Votes are public** — every vote event names its voter (§8.3), so anyone can
+see who voted for what. Before a user's *first* vote the client shows an
+interstitial saying so; nothing is sent until they confirm (Cancel sends
+nothing). The acknowledgement is remembered per user in `localStorage`, so a
+new browser shows it once more. Retracting never triggers it.
+
+**Hidden notes free their votes** (implemented with moderation, M8): dots on
+a hidden note stop counting against their voters' budgets while it is hidden.
+The dots themselves are kept, so unhiding restores them — which may leave a
+voter over budget, handled like a budget cut.
+
 ### Scheduling (organizer, wave `open`)
 
 Left rail: unscheduled pool sorted by votes (drag source). Grid: columns =
