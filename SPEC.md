@@ -128,7 +128,7 @@ note per wave.
 
 ### Server
 
-- Go ≥ 1.22, stdlib `net/http` with pattern routing (`"GET /api/me"` style).
+- Go ≥ 1.25 (required by the SQLite driver), stdlib `net/http` with pattern routing (`"GET /api/me"` style).
   No web framework.
 - WebSocket: `github.com/coder/websocket` (v1.8.x).
 - SQLite: `modernc.org/sqlite` (pure Go, no cgo), `database/sql`.

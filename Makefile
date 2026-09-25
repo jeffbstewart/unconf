@@ -11,10 +11,10 @@ web: web/node_modules
 	@touch web/dist/.gitkeep  # vite empties dist; keep the embed target present
 
 # Go server on :8080 plus the Vite dev server (hot reload) proxying /api and /ws.
-# Ctrl-C stops both.
+# The admin key defaults to "dev" here only. Ctrl-C stops both.
 dev: web/node_modules
 	@trap 'kill 0' EXIT; \
-	go run ./cmd/unconf & \
+	UNCONF_ADMIN_KEY=$${UNCONF_ADMIN_KEY:-dev} go run ./cmd/unconf & \
 	cd web && npm run dev
 
 test: test-go test-web

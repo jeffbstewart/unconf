@@ -32,21 +32,21 @@ var builtDist = fstest.MapFS{
 }
 
 func TestHealthz(t *testing.T) {
-	res := get(t, New(builtDist), "GET", "/api/healthz")
+	res := get(t, newTestServer(t, builtDist), "GET", "/api/healthz")
 	if res.StatusCode != http.StatusOK || body(t, res) != "ok\n" {
 		t.Fatalf("got %d", res.StatusCode)
 	}
 }
 
 func TestUnknownAPIIs404NotSPA(t *testing.T) {
-	res := get(t, New(builtDist), "GET", "/api/nope")
+	res := get(t, newTestServer(t, builtDist), "GET", "/api/nope")
 	if res.StatusCode != http.StatusNotFound {
 		t.Fatalf("got %d, want 404", res.StatusCode)
 	}
 }
 
 func TestStatic(t *testing.T) {
-	h := New(builtDist)
+	h := newTestServer(t, builtDist)
 	tests := []struct {
 		target, wantBody, wantCache string
 	}{
@@ -73,14 +73,14 @@ func TestStatic(t *testing.T) {
 }
 
 func TestStaticRejectsNonGet(t *testing.T) {
-	res := get(t, New(builtDist), "POST", "/")
+	res := get(t, newTestServer(t, builtDist), "POST", "/")
 	if res.StatusCode != http.StatusMethodNotAllowed {
 		t.Fatalf("got %d, want 405", res.StatusCode)
 	}
 }
 
 func TestNotBuilt(t *testing.T) {
-	res := get(t, New(fstest.MapFS{".gitkeep": {}}), "GET", "/")
+	res := get(t, newTestServer(t, fstest.MapFS{".gitkeep": {}}), "GET", "/")
 	if res.StatusCode != http.StatusServiceUnavailable {
 		t.Fatalf("got %d, want 503", res.StatusCode)
 	}

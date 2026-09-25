@@ -4,6 +4,8 @@ package main
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"errors"
 	"log"
 	"net/http"
@@ -13,23 +15,52 @@ import (
 	"time"
 
 	"github.com/jeffbstewart/unconf/internal/server"
+	"github.com/jeffbstewart/unconf/internal/store"
 	"github.com/jeffbstewart/unconf/web"
 )
 
 func main() {
 	addr := envOr("UNCONF_ADDR", ":8080")
-
-	srv := &http.Server{
-		Addr:              addr,
-		Handler:           server.New(web.Dist()),
-		ReadHeaderTimeout: 10 * time.Second,
+	dbPath := envOr("UNCONF_DB", "unconf.db")
+	eventName := envOr("UNCONF_EVENT_NAME", "Unconference")
+	adminKey := os.Getenv("UNCONF_ADMIN_KEY")
+	if adminKey == "" {
+		log.Fatal("UNCONF_ADMIN_KEY is required (the key that grants organizer at login)")
 	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
+	st, err := store.Open(ctx, dbPath)
+	if err != nil {
+		log.Fatalf("open database: %v", err)
+	}
+	defer st.Close()
+
+	event, err := st.EnsureDefaultEvent(ctx, eventName)
+	if err != nil {
+		log.Fatalf("default event: %v", err)
+	}
+
+	secret, err := sessionSecret(ctx, st)
+	if err != nil {
+		log.Fatalf("session secret: %v", err)
+	}
+
+	srv := &http.Server{
+		Addr: addr,
+		Handler: server.New(server.Config{
+			Store:         st,
+			EventID:       event.ID,
+			AdminKey:      adminKey,
+			SessionSecret: secret,
+			Static:        web.Dist(),
+		}),
+		ReadHeaderTimeout: 10 * time.Second,
+	}
+
 	go func() {
-		log.Printf("unconf listening on %s", addr)
+		log.Printf("unconf serving %q on %s (db %s)", event.Name, addr, dbPath)
 		if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			log.Fatalf("listen: %v", err)
 		}
@@ -42,6 +73,22 @@ func main() {
 	if err := srv.Shutdown(shutdownCtx); err != nil {
 		log.Printf("shutdown: %v", err)
 	}
+}
+
+// sessionSecret returns UNCONF_SESSION_SECRET, or a random secret generated
+// on first run and persisted in meta so sessions survive restarts.
+func sessionSecret(ctx context.Context, st *store.Store) ([]byte, error) {
+	if v := os.Getenv("UNCONF_SESSION_SECRET"); v != "" {
+		return []byte(v), nil
+	}
+	v, err := st.MetaOrInit(ctx, "session_secret", func() string {
+		b := make([]byte, 32)
+		if _, err := rand.Read(b); err != nil {
+			panic(err)
+		}
+		return hex.EncodeToString(b)
+	})
+	return []byte(v), err
 }
 
 func envOr(key, def string) string {
