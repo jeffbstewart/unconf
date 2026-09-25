@@ -7,7 +7,7 @@ per-note chat, and moderation. See [SPEC.md](SPEC.md) for the full design.
 ## Requirements
 
 - Go 1.22+
-- Node.js 20+ (with npm)
+- Node.js 20.19+ or 22.12+ (with npm) — required by Vite 8
 
 ## Development
 
