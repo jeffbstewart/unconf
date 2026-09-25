@@ -72,12 +72,12 @@ A higher role can do everything a lower role can.
 | Capability | Participant | Moderator | Organizer |
 |---|---|---|---|
 | Create notes; edit/delete **own** notes; add/remove links on own notes | ✔ | ✔ | ✔ |
-| Move any (unscheduled, unhidden) note on the board | ✔ | ✔ | ✔ |
+| Move any (unscheduled, not hidden) note on the board | ✔ | ✔ | ✔ |
 | Vote / retract votes while voting is open | ✔ | ✔ | ✔ |
 | Star/unstar any note (personal bookmark) | ✔ | ✔ | ✔ |
 | Post chat messages | ✔ | ✔ | ✔ |
 | Edit/delete **any** note; edit links on any note | | ✔ | ✔ |
-| Hide/unhide notes and chat messages | | ✔ | ✔ |
+| Hide notes and chat messages (permanent; there is no unhide) | | ✔ | ✔ |
 | Create/edit/delete regions | | ✔ | ✔ |
 | See hidden items (flagged) and the audit log | | ✔ | ✔ |
 | Open/close voting; set votes-per-user | | | ✔ |
@@ -143,7 +143,7 @@ back for the next wave; the vote rows are kept as interest history. Votes on
 the *open* wave's draft still count (the draft can change). Voting for — or
 withdrawing a vote from — a note already scheduled in a locked/done wave is
 `not_allowed_now` (it's history). Whenever a user's `votesUsed` changes for a
-reason other than their own vote (lock, hide, unhide), the server sends them a
+reason other than their own vote (lock, hide), the server sends them a
 personal `votes_used_set {votesUsed}` event.
 
 ### 4.2 Schedule suggester
@@ -378,7 +378,7 @@ CREATE TABLE audit_log (
   id       TEXT PRIMARY KEY,
   event_id TEXT NOT NULL,
   actor_id TEXT NOT NULL,
-  action   TEXT NOT NULL,     -- e.g. hide_note, unhide_message, wave_locked, role_changed
+  action   TEXT NOT NULL,     -- e.g. hide_note, hide_message, wave_status_set, role_changed
   target   TEXT NOT NULL,     -- id of the affected entity
   detail   TEXT,              -- optional JSON
   at       TEXT NOT NULL
@@ -487,15 +487,15 @@ failures (voting closed, wave not open, lifecycle) → `not_allowed_now`.
 |---|---|---|
 | `create_note` | `{title, bodyMd?, x, y, color?}` | any, lifecycle `active` (mods+ also during `setup`); position is overlap-resolved by the server (§9) |
 | `update_note` | `{noteId, title?, bodyMd?, color?}` | author or mods+ |
-| `move_note` | `{noteId, x, y}` | any; note must be unhidden; requested position is overlap-resolved by the server (§9); throttle: server coalesces to ≤ 20 moves/s per note |
+| `move_note` | `{noteId, x, y}` | any; note must not be hidden; requested position is overlap-resolved by the server (§9); throttle: server coalesces to ≤ 20 moves/s per note |
 | `delete_note` | `{noteId}` | author (only if note has 0 votes and 0 assignments), or mods+ always |
 | `set_links` | `{noteId, links: [{title,url,kind}]}` | author or mods+ (full replace) |
 | `cast_vote` | `{noteId}` | any who may interact (lifecycle as `create_note`), `voting_open`, note not hidden; **one vote per person per session** — voting again is a no-op (ack, no event); otherwise needs budget remaining (out of budget → `not_allowed_now`) |
 | `retract_vote` | `{noteId}` | same gating; removes the user's vote there; none there → `bad_request` |
 | `star_note` / `unstar_note` | `{noteId}` | any, in every lifecycle (participants excepted during `setup`, when they can't see the board); stars are personal — resulting events reach only the acting user's connections; starring an already-starred note is a no-op (ack, no event) |
 | `post_message` | `{noteId, body, threadId?}` | any, lifecycle `active`; `threadId` must reference a root message on the same note |
-| `hide_message` / `unhide_message` | `{messageId}` | mods+ |
-| `hide_note` / `unhide_note` | `{noteId}` | mods+ |
+| `hide_message` | `{messageId}` | mods+; permanent (no unhide) |
+| `hide_note` | `{noteId}` | mods+; permanent (no unhide); frees its voters' votes (§11) |
 | `create_region` | `{label, x, y, w, h, color, z?}` | mods+ |
 | `update_region` | `{regionId, label?, x?, y?, w?, h?, color?, z?}` | mods+ |
 | `delete_region` | `{regionId}` | mods+ |
@@ -543,10 +543,10 @@ Moderation events are role-split at fan-out:
 
 - `hide_note`: moderators+ receive `note_hidden {noteId, byUserId}`;
   participants receive `note_deleted {noteId}` (the client just removes it).
-- `unhide_note`: moderators+ receive `note_unhidden`; participants receive a
-  fresh `note_created` carrying the full note (plus its links; vote totals and
-  messages are re-sent as part of the payload).
-- Same pattern for messages (`message_hidden` vs `message_deleted`, etc.).
+- Same pattern for messages (`message_hidden` vs `message_deleted`).
+- Hiding is permanent: there is no unhide (decided 2026-09-25 — restoring a
+  note would re-consume its voters' freed votes, which would surprise them;
+  see the principle in §11).
 - Snapshots for participants simply omit hidden notes/messages; snapshots for
   moderators+ include them with `hidden: true`.
 
@@ -617,9 +617,7 @@ server-authoritative and deterministic:
   coordinates; clients render the authoritative position (§8.3). During a drag
   the client shows its optimistic ghost and snaps on the ack event.
 - **Hidden notes are ignored** for overlap (participants can't see them and
-  must not be able to infer them from blocked placement). On `unhide_note`,
-  the server re-resolves the unhidden note's own position if it now overlaps,
-  emitting a `note_moved` alongside the unhide.
+  must not be able to infer them from blocked placement).
 
 ### Board extent, pan/zoom, snap-to-grid
 
@@ -701,7 +699,7 @@ hidden rows entirely)`.
    attendee view.
 4. **Admin** (`#/admin`, tab in the top bar) — organizer: lifecycle, voting toggle + budget,
    **People** (make participants moderators — i.e. schedulers — and back).
-   Moderator: hidden-items list (unhide from here), audit log (M8).
+   Moderator: hidden-items list (read-only record of what was hidden, by whom, when), audit log (M8).
 
 Top bar: event name, view tabs, connection indicator (green/amber during
 reconnect), votes remaining (when voting open), user name + role badge.
@@ -752,11 +750,17 @@ interstitial saying so; nothing is sent until they confirm (Cancel sends
 nothing). The acknowledgement is remembered per user in `localStorage`, so a
 new browser shows it once more. Retracting never triggers it.
 
-**Hidden notes free their votes** (budget formula in place since M6; the
-hide/unhide commands and their `votes_used_set` pushes arrive with M8): votes on
-a hidden note stop counting against their voters' budgets while it is hidden.
-The dots themselves are kept, so unhiding restores them — which may leave a
-voter over budget, handled like a budget cut.
+**Admin and moderation actions may free votes, never consume them**
+(decided 2026-09-25). Locking a wave (§4.1), hiding a note, deleting a note,
+and merging duplicates all *return* votes to their voters; no such action may
+ever take a vote back. That is why hiding is permanent (no unhide): restoring
+a note would silently re-spend its voters' freed votes. Budget changes are the
+one organizer lever on budgets: lowering `votesPerUser` never removes a vote
+already cast; it only stops over-budget users from casting more.
+
+**Hidden notes free their votes** (budget formula in place since M6; `hide_note`
+and its `votes_used_set` pushes arrive with M8). The vote rows are kept for the
+record but never count again.
 
 ### Schedule screen
 
@@ -870,10 +874,10 @@ Build in order; each milestone ends compiling, tested, and demoable.
 7. **Chat** — thread panel, realtime, thread-shaped storage.
    ✓ Messages appear live in the other window's modal; replies nest under
    roots; counts on stickies update.
-8. **Moderation** — hide/unhide notes & messages with role-split fan-out,
-   hidden-items admin list, audit log.
+8. **Moderation** — hide notes & messages (permanent) with role-split
+   fan-out, freed votes pushed to voters, hidden-items admin list, audit log.
    ✓ Hiding a note removes it from participant windows instantly but leaves it
-   flagged for mods; unhide restores it (with votes/messages intact);
+   flagged for mods; its voters get those votes back immediately;
    participant snapshots never contain hidden content.
 9. **Export & integration stubs** — BoardSnapshot builder, debounced
    SheetMirror stub, `/api/export.{csv,json}`, remaining service stubs wired.
@@ -892,7 +896,7 @@ Build in order; each milestone ends compiling, tested, and demoable.
   rollback of a failing fragment, file-name validation); vote budget math; wave/lifecycle
   transition rules (incl. one-open-wave); region containment (z-order, ties,
   region-edit retagging); sticky non-overlap resolution (deterministic spiral,
-  hidden notes ignored, re-resolution on unhide); star privacy (star events
+  hidden notes ignored); star privacy (star events
   reach only the acting user; snapshots never carry another user's stars);
   command permission matrix (table-driven: every command × every role);
   snapshot role-filtering (participant snapshot contains no hidden items).
