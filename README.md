@@ -84,30 +84,16 @@ of them private or in another browser so each has its own cookie.
 6. B: turn on **⊞ Snap** and drag a note. It lands on the 20-unit grid. A,
    with snap off, can still place notes anywhere.
 
-## Schema changes
+**Voting (milestone 5)**
 
-The database schema is built entirely from numbered SQL fragments in
-`internal/store/schema/` (`001_meta.sql`, `002_events_users.sql`, ...), which
-are embedded in the binary. At startup the server applies any fragments the
-database hasn't seen and records each one's SHA-256 in `schema_version`.
-
-To change the schema, **add** the next fragment, e.g.
-`007_note_capacity.sql`. Never edit or rename a fragment that has been
-applied anywhere: the server refuses to start if a recorded hash doesn't
-match the binary's fragment. See SPEC.md §7.1.
-
-## Configuration
-
-| Env var | Default | Purpose |
-|---|---|---|
-| `UNCONF_ADDR` | `:8080` | listen address |
-| `UNCONF_DB` | `unconf.db` | SQLite database path |
-| `UNCONF_ADMIN_KEY` | *(required)* | logging in with this key grants the organizer role |
-| `UNCONF_SESSION_SECRET` | generated, stored in the DB | HMAC key for session cookies |
-| `UNCONF_EVENT_NAME` | `Unconference` | name of the event created on first run |
-
-`UNCONF_EXPORT_DIR` arrives with milestone 9 (see SPEC.md §12).
-
-## License
-
-Public domain ([Unlicense](LICENSE)).
+1. A (organizer): open the **Admin** tab, set *Votes per person* to 3, and
+   **Open voting**. B's top bar shows *3 / 3 votes left*.
+2. B: click a note's **▲ 0** toggle. The first time, a notice explains that
+   votes are public; confirm it. A sees **▲ 1** live, and B's toggle turns
+   blue. Clicking it again withdraws the vote.
+3. B: vote for three sessions. The remaining toggles disable, since it's one
+   vote per session with a budget of 3. The server enforces this too.
+4. B: in **List** with *Ranking (votes)*, notes reorder live as votes move.
+5. A: **Close voting**. B's toggles and budget disappear, while the tallies
+   stay. Change the budget and reopen: B's remaining count reflects the new
+   budget.

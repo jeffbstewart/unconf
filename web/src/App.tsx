@@ -1,7 +1,10 @@
 import { useEffect, useState } from 'react';
 import { fetchMe, logout, type Me } from './api/http';
 import { Login } from './auth/Login';
+import { AdminPage } from './admin/AdminPage';
 import { BoardPage } from './board/BoardPage';
+import { VoteNotice } from './board/VoteNotice';
+import { useRoute } from './route';
 import { useStore } from './store/store';
 import { Toasts } from './Toasts';
 import { TopBar } from './TopBar';
@@ -38,6 +41,7 @@ function Workspace({ me, onLoggedOut }: { me: Me; onLoggedOut: () => void }) {
   const ready = useStore((s) => s.ready);
   const lifecycle = useStore((s) => s.event?.lifecycle);
   const role = useStore((s) => s.you?.role ?? me.role);
+  const route = useRoute();
 
   useEffect(() => {
     connect();
@@ -57,12 +61,14 @@ function Workspace({ me, onLoggedOut }: { me: Me; onLoggedOut: () => void }) {
   let body;
   if (!ready) body = <p className="app-message">Connecting…</p>;
   else if (lifecycle === 'setup' && role === 'participant') body = <NotStarted />;
+  else if (route === 'admin' && role === 'organizer') body = <AdminPage />;
   else body = <BoardPage />;
 
   return (
     <>
-      <TopBar me={me} onLogout={handleLogout} />
+      <TopBar me={me} route={route} onLogout={handleLogout} />
       {body}
+      <VoteNotice />
       <Toasts />
     </>
   );

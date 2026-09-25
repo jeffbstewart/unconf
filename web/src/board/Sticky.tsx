@@ -1,6 +1,7 @@
 import { memo, type PointerEvent } from 'react';
 import { NOTE_H, NOTE_W, type Note } from '../api/protocol';
 import { initials, snippet } from './text';
+import { VoteControl } from './VoteControl';
 
 interface Props {
   note: Note;
@@ -66,11 +67,7 @@ export const Sticky = memo(function Sticky({
             💬 {chatCount}
           </span>
         )}
-        {note.voteTotal > 0 && (
-          <span className="sticky-badge" title={`${note.voteTotal} votes`}>
-            ● {note.voteTotal}
-          </span>
-        )}
+        <VoteControl note={note} compact />
       </div>
     </div>
   );

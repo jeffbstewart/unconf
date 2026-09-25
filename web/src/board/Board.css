@@ -345,3 +345,46 @@ button.toggled:hover:not(:disabled) {
 .region-swatch.selected {
   border-color: #1f2328;
 }
+
+/* Votes */
+
+.votes {
+  display: inline-flex;
+  align-items: center;
+  font-size: 13px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.vote-count,
+.vote-toggle {
+  padding: 1px 8px;
+  border-radius: 999px;
+  background: rgb(255 255 255 / 0.6);
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.vote-toggle {
+  border: 1px solid rgb(0 0 0 / 0.15);
+  font-size: inherit;
+  line-height: 1.4;
+}
+
+.vote-toggle:hover:not(:disabled) {
+  border-color: #1f6feb;
+  background: #ddf4ff;
+}
+
+/* Your vote: filled. Explicit :hover so the global button:hover rule can't hide it. */
+.votes-mine .vote-count,
+.votes-mine .vote-toggle,
+.votes-mine .vote-toggle:hover:not(:disabled) {
+  border-color: #1f6feb;
+  background: #1f6feb;
+  color: #fff;
+}
+
+.votes-compact {
+  font-size: 11px;
+}

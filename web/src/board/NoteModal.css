@@ -202,3 +202,33 @@
 .modal-star.starred {
   color: #d4a72c;
 }
+
+.note-modal .votes {
+  margin: 0 0 12px;
+  font-size: 15px;
+}
+
+.note-modal .vote-count,
+.note-modal .vote-toggle {
+  padding: 3px 12px;
+  background: #eaeef2;
+}
+
+.vote-notice {
+  width: min(480px, 100%);
+}
+
+.vote-notice h2 {
+  margin: 0 0 8px;
+  font-size: 20px;
+}
+
+.vote-notice p {
+  line-height: 1.5;
+}
+
+.note-modal .votes-mine .vote-count,
+.note-modal .votes-mine .vote-toggle,
+.note-modal .votes-mine .vote-toggle:hover:not(:disabled) {
+  background: #1f6feb;
+}

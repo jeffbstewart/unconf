@@ -30,6 +30,11 @@ var commandHandlers = map[string]commandHandler{
 	"delete_region": decoded((*Hub).deleteRegion),
 	"star_note":     decoded((*Hub).starNote),
 	"unstar_note":   decoded((*Hub).unstarNote),
+
+	"cast_vote":          decoded((*Hub).castVote),
+	"retract_vote":       decoded((*Hub).retractVote),
+	"set_voting":         decoded((*Hub).setVoting),
+	"set_votes_per_user": decoded((*Hub).setVotesPerUser),
 }
 
 // decoded adapts a handler taking a typed payload.
@@ -302,10 +307,7 @@ func (h *Hub) setLifecycle(tx store.Tx, a domain.Actor, p setLifecyclePayload) (
 	if err := tx.SetLifecycle(h.ctx, h.eventID, p.Lifecycle); err != nil {
 		return change{}, internal(err)
 	}
-	detail, _ := json.Marshal(map[string]string{"from": string(h.lifecycle), "to": string(p.Lifecycle)})
-	if err := tx.AppendAudit(h.ctx, store.AuditEntry{
-		EventID: h.eventID, ActorID: a.UserID, Action: "lifecycle_set", Target: h.eventID, Detail: string(detail),
-	}); err != nil {
+	if err := h.audit(tx, a, "lifecycle_set", map[string]any{"from": h.lifecycle, "to": p.Lifecycle}); err != nil {
 		return change{}, internal(err)
 	}
 	return change{
@@ -557,6 +559,132 @@ func (h *Hub) setStar(tx store.Tx, a domain.Actor, noteID string, star bool) (ch
 	return change{events: []eventSpec{{part: ev, mod: ev, onlyUser: a.UserID}}}, nil
 }
 
+func (h *Hub) castVote(tx store.Tx, a domain.Actor, p noteIDPayload) (change, *domain.CmdError) {
+	ev, n, facts, cerr := h.voteContext(tx, a, p.NoteID)
+	if cerr != nil {
+		return change{}, cerr
+	}
+	if err := domain.AuthorizeVote(a, h.lifecycle, ev.VotingOpen, facts); err != nil {
+		return change{}, err
+	}
+	// One vote per person per note: voting again is a no-op (ack, no
+	// event), even for someone at their budget.
+	if voted, err := tx.HasVoted(h.ctx, a.UserID, n.ID); err != nil {
+		return change{}, internal(err)
+	} else if voted {
+		return change{}, nil
+	}
+	used, err := tx.VotesCast(h.ctx, a.UserID)
+	if err != nil {
+		return change{}, internal(err)
+	}
+	if err := domain.CheckVoteBudget(used, ev.VotesPerUser); err != nil {
+		return change{}, err
+	}
+	if _, err := tx.CastVote(h.ctx, domain.NewID(), a.UserID, n.ID, domain.Timestamp(time.Now())); err != nil {
+		return change{}, internal(err)
+	}
+	return h.voteEvent(tx, "vote_cast", a, n.ID)
+}
+
+func (h *Hub) retractVote(tx store.Tx, a domain.Actor, p noteIDPayload) (change, *domain.CmdError) {
+	ev, n, facts, cerr := h.voteContext(tx, a, p.NoteID)
+	if cerr != nil {
+		return change{}, cerr
+	}
+	if err := domain.AuthorizeVote(a, h.lifecycle, ev.VotingOpen, facts); err != nil {
+		return change{}, err
+	}
+	removed, err := tx.RetractVote(h.ctx, a.UserID, n.ID)
+	if err != nil {
+		return change{}, internal(err)
+	}
+	if !removed {
+		return change{}, domain.BadRequest("you have not voted for this note")
+	}
+	return h.voteEvent(tx, "vote_retracted", a, n.ID)
+}
+
+func (h *Hub) voteContext(tx store.Tx, a domain.Actor, noteID string) (store.Event, store.Note, domain.NoteFacts, *domain.CmdError) {
+	n, facts, cerr := h.visibleNote(tx, a, noteID)
+	if cerr != nil {
+		return store.Event{}, store.Note{}, domain.NoteFacts{}, cerr
+	}
+	ev, err := tx.Event(h.ctx, h.eventID)
+	if err != nil {
+		return store.Event{}, store.Note{}, domain.NoteFacts{}, internal(err)
+	}
+	return ev, n, facts, nil
+}
+
+// voteEvent reports a note's new voter count; byUserId lets the voter's
+// clients update their remaining budget (SPEC §8.3).
+func (h *Hub) voteEvent(tx store.Tx, kind string, a domain.Actor, noteID string) (change, *domain.CmdError) {
+	total, err := tx.NoteVoteTotal(h.ctx, noteID)
+	if err != nil {
+		return change{}, internal(err)
+	}
+	return change{events: []eventSpec{toAll(E{"kind": kind, "noteId": noteID, "byUserId": a.UserID, "total": total})}}, nil
+}
+
+type setVotingPayload struct {
+	Open *bool `json:"open"`
+}
+
+func (h *Hub) setVoting(tx store.Tx, a domain.Actor, p setVotingPayload) (change, *domain.CmdError) {
+	if err := domain.AuthorizeVotingSettings(a, h.lifecycle); err != nil {
+		return change{}, err
+	}
+	if p.Open == nil {
+		return change{}, domain.BadRequest("open is required")
+	}
+	ev, err := tx.Event(h.ctx, h.eventID)
+	if err != nil {
+		return change{}, internal(err)
+	}
+	if ev.VotingOpen == *p.Open {
+		return change{}, nil // already so
+	}
+	if err := tx.SetVotingOpen(h.ctx, h.eventID, *p.Open); err != nil {
+		return change{}, internal(err)
+	}
+	if err := h.audit(tx, a, "voting_set", map[string]any{"open": *p.Open}); err != nil {
+		return change{}, internal(err)
+	}
+	return change{events: []eventSpec{toAll(E{"kind": "voting_set", "open": *p.Open})}}, nil
+}
+
+type setVotesPerUserPayload struct {
+	N *int `json:"n"`
+}
+
+func (h *Hub) setVotesPerUser(tx store.Tx, a domain.Actor, p setVotesPerUserPayload) (change, *domain.CmdError) {
+	if err := domain.AuthorizeVotingSettings(a, h.lifecycle); err != nil {
+		return change{}, err
+	}
+	if p.N == nil {
+		return change{}, domain.BadRequest("n is required")
+	}
+	if err := domain.ValidateVotesPerUser(*p.N); err != nil {
+		return change{}, err
+	}
+	if err := tx.SetVotesPerUser(h.ctx, h.eventID, *p.N); err != nil {
+		return change{}, internal(err)
+	}
+	if err := h.audit(tx, a, "votes_per_user_set", map[string]any{"n": *p.N}); err != nil {
+		return change{}, internal(err)
+	}
+	return change{events: []eventSpec{toAll(E{"kind": "votes_per_user_set", "n": *p.N})}}, nil
+}
+
+// audit records an organizer action on the event.
+func (h *Hub) audit(tx store.Tx, a domain.Actor, action string, detail map[string]any) error {
+	b, _ := json.Marshal(detail)
+	return tx.AppendAudit(h.ctx, store.AuditEntry{
+		EventID: h.eventID, ActorID: a.UserID, Action: action, Target: h.eventID, Detail: string(b),
+	})
+}
+
 // auditRoleChange records a role change made through the admin key.
 func auditRoleChange(ctx context.Context, tx store.Tx, eventID, userID string, from, to domain.Role) error {
 	detail, _ := json.Marshal(map[string]string{"from": string(from), "to": string(to), "via": "admin_key"})
@@ -599,7 +727,7 @@ func (h *Hub) buildSnapshot(u store.User) (snapshotJSON, error) {
 	if err != nil {
 		return s, err
 	}
-	mine, err := st.UserVotes(ctx, u.ID)
+	mine, err := st.UserVoted(ctx, u.ID)
 	if err != nil {
 		return s, err
 	}
@@ -623,13 +751,15 @@ func (h *Hub) buildSnapshot(u store.User) (snapshotJSON, error) {
 		}
 		visible[n.ID] = true
 		j := toNoteJSON(n, links[n.ID])
-		j.VoteTotal, j.MyVotes, j.Starred, j.Scheduled = totals[n.ID], mine[n.ID], stars[n.ID], scheduled[n.ID]
+		j.VoteTotal, j.Voted, j.Starred, j.Scheduled = totals[n.ID], mine[n.ID], stars[n.ID], scheduled[n.ID]
 		s.Notes = append(s.Notes, j)
 	}
-	used := 0
-	for _, v := range mine {
-		used += v
+	// Count every dot, including any on notes hidden from this user.
+	used, err := st.VotesCast(ctx, u.ID)
+	if err != nil {
+		return s, err
 	}
+	s.Me.VotesUsed = used
 	s.Me.VotesRemaining = max(0, ev.VotesPerUser-used)
 
 	regions, err := st.Regions(ctx, h.eventID)

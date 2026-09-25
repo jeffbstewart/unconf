@@ -45,7 +45,7 @@ export function filtersActive(f: Filters): boolean {
 /** Whether a note passes every active filter. */
 export function matches(n: Note, f: Filters, youId: string | undefined): boolean {
   if (f.mine && n.authorId !== youId) return false;
-  if (f.myVotes && n.myVotes === 0) return false;
+  if (f.myVotes && !n.voted) return false;
   if (f.starred && !n.starred) return false;
   if (f.unscheduled && n.scheduled) return false;
   if (f.regions.length > 0 && !f.regions.includes(n.regionId ?? NO_REGION)) return false;
