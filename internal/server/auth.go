@@ -188,7 +188,8 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		asOrganizer = true
 	}
 
-	u, err := s.loginUser(r.Context(), name, email, asOrganizer)
+	// Resume or create the user on the hub, the single writer (SPEC §8.1).
+	u, err := s.hub.Login(r.Context(), name, email, asOrganizer)
 	if err != nil {
 		log.Printf("login: %v", err)
 		writeError(w, http.StatusInternalServerError, "internal error")
@@ -196,61 +197,6 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 	}
 	s.setSessionCookie(w, r, u.ID)
 	s.writeMe(w, r.Context(), u)
-}
-
-// loginUser resumes the user with this name, or creates one. A matching
-// admin key promotes the user to organizer.
-func (s *Server) loginUser(ctx context.Context, name, email string, asOrganizer bool) (store.User, error) {
-	st := s.cfg.Store
-	u, err := st.UserByName(ctx, s.cfg.EventID, name)
-	if errors.Is(err, store.ErrNotFound) {
-		u = store.User{
-			ID:        domain.NewID(),
-			EventID:   s.cfg.EventID,
-			Name:      name,
-			Email:     email,
-			Role:      domain.RoleParticipant,
-			CreatedAt: domain.Timestamp(time.Now()),
-		}
-		if asOrganizer {
-			u.Role = domain.RoleOrganizer
-		}
-		err = st.CreateUser(ctx, u)
-		if errors.Is(err, store.ErrConflict) {
-			// A concurrent login created the same name; resume it instead.
-			return s.loginUser(ctx, name, email, asOrganizer)
-		}
-		if err == nil && asOrganizer {
-			s.auditRoleChange(ctx, u.ID, "", domain.RoleOrganizer)
-		}
-		return u, err
-	}
-	if err != nil {
-		return store.User{}, err
-	}
-	if email != "" && email != u.Email {
-		if err := st.SetUserEmail(ctx, u.ID, email); err != nil {
-			return store.User{}, err
-		}
-		u.Email = email
-	}
-	if asOrganizer && u.Role != domain.RoleOrganizer {
-		if err := st.SetUserRole(ctx, u.ID, domain.RoleOrganizer); err != nil {
-			return store.User{}, err
-		}
-		s.auditRoleChange(ctx, u.ID, u.Role, domain.RoleOrganizer)
-		u.Role = domain.RoleOrganizer
-	}
-	return u, nil
-}
-
-func (s *Server) auditRoleChange(ctx context.Context, userID string, from, to domain.Role) {
-	detail, _ := json.Marshal(map[string]string{"from": string(from), "to": string(to), "via": "admin_key"})
-	if err := s.cfg.Store.AppendAudit(ctx, store.AuditEntry{
-		EventID: s.cfg.EventID, ActorID: userID, Action: "role_changed", Target: userID, Detail: string(detail),
-	}); err != nil {
-		log.Printf("audit: %v", err)
-	}
 }
 
 func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request) {

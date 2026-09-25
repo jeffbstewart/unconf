@@ -30,7 +30,7 @@ func TestOpenAppliesShippedSchema(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	applied, err := schema.AppliedVersions(ctx, s.db)
+	applied, err := schema.AppliedVersions(ctx, s.sqldb)
 	if err != nil || len(applied) != len(frags) {
 		t.Fatalf("applied %d of %d fragments: %v", len(applied), len(frags), err)
 	}
@@ -63,8 +63,8 @@ func TestPragmas(t *testing.T) {
 	s, _ := openTemp(t)
 	var mode string
 	var fk int
-	s.db.QueryRow("PRAGMA journal_mode").Scan(&mode)
-	s.db.QueryRow("PRAGMA foreign_keys").Scan(&fk)
+	s.db.QueryRowContext(context.Background(), "PRAGMA journal_mode").Scan(&mode)
+	s.db.QueryRowContext(context.Background(), "PRAGMA foreign_keys").Scan(&fk)
 	if mode != "wal" || fk != 1 {
 		t.Fatalf("journal_mode=%s foreign_keys=%d", mode, fk)
 	}

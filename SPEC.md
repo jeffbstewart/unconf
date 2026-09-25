@@ -398,6 +398,16 @@ Endpoint: `GET /ws?since=<seq>` (cookie-authenticated). All frames are JSON text
 - On connect with `?since=s`: if `s` is within the ring buffer, replay events
   `> s`; otherwise send a full `snapshot`. The client tracks the highest seq it
   has applied and reconnects with it (exponential backoff, 1s→30s).
+- A reconnect is caught up by replay only when the missed events fit in half
+  the connection's send buffer (512 events); otherwise it gets a snapshot.
+  A client claiming a `since` beyond the server's seq (e.g. after a database
+  reset) also gets a snapshot.
+- Each connection has a 1024-frame send buffer. A client too slow to drain
+  it is disconnected rather than stalling the hub; it reconnects and catches
+  up like any other reconnect.
+- Login runs on the hub too, so a new user is a sequenced `user_joined`
+  event and an admin-key promotion a `role_set`. A promoted user's open
+  connections receive a fresh snapshot for their new role.
 - Events are **role-filtered at fan-out** (see §8.3): a participant connection
   and a moderator connection may receive different frames for the same seq, and
   some seqs are skipped entirely for some roles. Clients must tolerate gaps in
@@ -438,7 +448,12 @@ failures (voting closed, wave not open, lifecycle) → `not_allowed_now`.
 
 Rate limiting: per connection, 20 commands/s sustained, burst 60 (token
 bucket); `move_note` drags should be client-throttled to ~15 Hz. Frame size cap
-64 KB. Violations → `error{code:"rate_limited"}`, repeated → close.
+64 KB. Violations → `error{code:"rate_limited"}`; 30 consecutive → close.
+
+Move coalescing: a `move_note` arriving within 50 ms of the note's last
+applied move is held; later moves of the same note replace it, and it is
+applied when the 50 ms elapses. Every coalesced command is acked with the
+seq of the move that was applied (or gets its error).
 
 ### 8.3 Events and moderation-aware fan-out
 
@@ -601,6 +616,8 @@ hidden rows entirely)`.
 
 Top bar: event name, view tabs, connection indicator (green/amber during
 reconnect), votes remaining (when voting open), user name + role badge.
+The top bar also shows the event's lifecycle; organizers advance it there
+(with a confirm) as well as from the Admin screen.
 
 ### Board
 
