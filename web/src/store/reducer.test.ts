@@ -12,7 +12,7 @@ const note = (id: string, over: Partial<Note> = {}): Note => ({
   color: 'yellow',
   regionId: null,
   voteTotal: 0,
-  myVotes: 0,
+  voted: false,
   starred: false,
   links: [],
   scheduled: false,
@@ -162,36 +162,46 @@ describe('voting', () => {
     event: { kind, noteId: 'n1', byUserId: by, total },
   });
 
-  it('tracks totals, my dots, and my budget', () => {
+  it('tracks totals, my vote, and my budget', () => {
     let s = loaded();
     expect(votesRemaining(s)).toBe(5);
-    s = run([vote(11, 'vote_cast', 'u1', 1), vote(12, 'vote_cast', 'u2', 2), vote(13, 'vote_cast', 'u1', 3)], s);
-    expect(s.notes.n1).toMatchObject({ voteTotal: 3, myVotes: 2 });
-    expect(s.votesUsed).toBe(2);
-    expect(votesRemaining(s)).toBe(3);
-    s = applyFrame(s, vote(14, 'vote_retracted', 'u2', 2));
-    expect(s.notes.n1).toMatchObject({ voteTotal: 2, myVotes: 2 });
-    s = applyFrame(s, vote(15, 'vote_retracted', 'u1', 1));
-    expect(s.notes.n1.myVotes).toBe(1);
+    s = run([vote(11, 'vote_cast', 'u1', 1), vote(12, 'vote_cast', 'u2', 2)], s);
+    expect(s.notes.n1).toMatchObject({ voteTotal: 2, voted: true });
+    expect(s.votesUsed).toBe(1);
     expect(votesRemaining(s)).toBe(4);
+    s = applyFrame(s, vote(13, 'vote_retracted', 'u2', 1));
+    expect(s.notes.n1).toMatchObject({ voteTotal: 1, voted: true });
+    s = applyFrame(s, vote(14, 'vote_retracted', 'u1', 0));
+    expect(s.notes.n1).toMatchObject({ voteTotal: 0, voted: false });
+    expect(votesRemaining(s)).toBe(5);
   });
 
-  it('refunds my dots when a voted note is deleted', () => {
-    let s = run([vote(11, 'vote_cast', 'u1', 1), vote(12, 'vote_cast', 'u1', 2)], loaded());
-    s = applyFrame(s, { type: 'event', seq: 13, event: { kind: 'note_deleted', noteId: 'n1' } });
+  it('never double-counts my own vote', () => {
+    // e.g. a vote_cast for a vote the snapshot already included
+    let s = run([vote(11, 'vote_cast', 'u1', 1), vote(12, 'vote_cast', 'u1', 1)], loaded());
+    expect(s.votesUsed).toBe(1);
+    s = run([vote(13, 'vote_retracted', 'u1', 0), vote(14, 'vote_retracted', 'u1', 0)], s);
+    expect(s.votesUsed).toBe(0);
+  });
+
+  it('refunds my vote when a voted note is deleted', () => {
+    let s = applyFrame(loaded(), vote(11, 'vote_cast', 'u1', 1));
+    s = applyFrame(s, { type: 'event', seq: 12, event: { kind: 'note_deleted', noteId: 'n1' } });
     expect(s.votesUsed).toBe(0);
   });
 
   it('follows voting open/closed and budget changes', () => {
-    let s = run([vote(11, 'vote_cast', 'u1', 1), vote(12, 'vote_cast', 'u1', 2)], loaded());
+    let s = applyFrame(loaded(), vote(11, 'vote_cast', 'u1', 1));
     s = run(
       [
-        { type: 'event', seq: 13, event: { kind: 'voting_set', open: true } },
-        { type: 'event', seq: 14, event: { kind: 'votes_per_user_set', n: 1 } },
+        { type: 'event', seq: 12, event: { kind: 'voting_set', open: true } },
+        { type: 'event', seq: 13, event: { kind: 'votes_per_user_set', n: 1 } },
       ],
       s,
     );
     expect(s.event?.votingOpen).toBe(true);
-    expect(votesRemaining(s)).toBe(0); // over budget after the cut: 2 used of 1
+    expect(votesRemaining(s)).toBe(0);
+    s = applyFrame(s, { type: 'event', seq: 14, event: { kind: 'votes_per_user_set', n: 3 } });
+    expect(votesRemaining(s)).toBe(2);
   });
 });

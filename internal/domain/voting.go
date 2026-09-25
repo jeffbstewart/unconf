@@ -7,7 +7,8 @@ const (
 
 // AuthorizeVote covers cast_vote and retract_vote (SPEC §8.2): anyone who
 // can interact with the board, while voting is open, on a visible note.
-// Budget and "has a vote there" are checked by the caller.
+// Each person has at most one vote per note; the budget and "has voted"
+// are checked by the caller.
 func AuthorizeVote(a Actor, lc Lifecycle, votingOpen bool, n NoteFacts) *CmdError {
 	if err := CheckInteract(a, lc); err != nil {
 		return err
@@ -21,8 +22,8 @@ func AuthorizeVote(a Actor, lc Lifecycle, votingOpen bool, n NoteFacts) *CmdErro
 	return nil
 }
 
-// CheckVoteBudget: a new dot needs a remaining vote. Users over budget
-// (after an organizer lowers it) keep their dots but cannot add more.
+// CheckVoteBudget: a new vote needs a remaining one. Users over budget
+// (after an organizer lowers it) keep their votes but cannot add more.
 func CheckVoteBudget(used, perUser int) *CmdError {
 	if used >= perUser {
 		return NotAllowedNow("you have used all %d of your votes", perUser)

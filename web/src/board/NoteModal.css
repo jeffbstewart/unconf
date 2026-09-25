@@ -208,17 +208,10 @@
   font-size: 15px;
 }
 
-.note-modal .vote-btn {
-  width: 28px;
-  height: 28px;
-}
-
-.note-modal .vote-count {
+.note-modal .vote-count,
+.note-modal .vote-toggle {
+  padding: 3px 12px;
   background: #eaeef2;
-}
-
-.note-modal .votes-mine .vote-count {
-  background: #1f6feb;
 }
 
 .vote-notice {
@@ -232,4 +225,10 @@
 
 .vote-notice p {
   line-height: 1.5;
+}
+
+.note-modal .votes-mine .vote-count,
+.note-modal .votes-mine .vote-toggle,
+.note-modal .votes-mine .vote-toggle:hover:not(:disabled) {
+  background: #1f6feb;
 }

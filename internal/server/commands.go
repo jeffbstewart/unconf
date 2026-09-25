@@ -567,6 +567,13 @@ func (h *Hub) castVote(tx store.Tx, a domain.Actor, p noteIDPayload) (change, *d
 	if err := domain.AuthorizeVote(a, h.lifecycle, ev.VotingOpen, facts); err != nil {
 		return change{}, err
 	}
+	// One vote per person per note: voting again is a no-op (ack, no
+	// event), even for someone at their budget.
+	if voted, err := tx.HasVoted(h.ctx, a.UserID, n.ID); err != nil {
+		return change{}, internal(err)
+	} else if voted {
+		return change{}, nil
+	}
 	used, err := tx.VotesCast(h.ctx, a.UserID)
 	if err != nil {
 		return change{}, internal(err)
@@ -574,7 +581,7 @@ func (h *Hub) castVote(tx store.Tx, a domain.Actor, p noteIDPayload) (change, *d
 	if err := domain.CheckVoteBudget(used, ev.VotesPerUser); err != nil {
 		return change{}, err
 	}
-	if err := tx.CastVote(h.ctx, domain.NewID(), a.UserID, n.ID, domain.Timestamp(time.Now())); err != nil {
+	if _, err := tx.CastVote(h.ctx, domain.NewID(), a.UserID, n.ID, domain.Timestamp(time.Now())); err != nil {
 		return change{}, internal(err)
 	}
 	return h.voteEvent(tx, "vote_cast", a, n.ID)
@@ -593,7 +600,7 @@ func (h *Hub) retractVote(tx store.Tx, a domain.Actor, p noteIDPayload) (change,
 		return change{}, internal(err)
 	}
 	if !removed {
-		return change{}, domain.BadRequest("you have no vote on this note")
+		return change{}, domain.BadRequest("you have not voted for this note")
 	}
 	return h.voteEvent(tx, "vote_retracted", a, n.ID)
 }
@@ -610,8 +617,8 @@ func (h *Hub) voteContext(tx store.Tx, a domain.Actor, noteID string) (store.Eve
 	return ev, n, facts, nil
 }
 
-// voteEvent reports a note's new total; byUserId lets the voter's clients
-// update their remaining budget (SPEC §8.3).
+// voteEvent reports a note's new voter count; byUserId lets the voter's
+// clients update their remaining budget (SPEC §8.3).
 func (h *Hub) voteEvent(tx store.Tx, kind string, a domain.Actor, noteID string) (change, *domain.CmdError) {
 	total, err := tx.NoteVoteTotal(h.ctx, noteID)
 	if err != nil {
@@ -720,7 +727,7 @@ func (h *Hub) buildSnapshot(u store.User) (snapshotJSON, error) {
 	if err != nil {
 		return s, err
 	}
-	mine, err := st.UserVotes(ctx, u.ID)
+	mine, err := st.UserVoted(ctx, u.ID)
 	if err != nil {
 		return s, err
 	}
@@ -744,7 +751,7 @@ func (h *Hub) buildSnapshot(u store.User) (snapshotJSON, error) {
 		}
 		visible[n.ID] = true
 		j := toNoteJSON(n, links[n.ID])
-		j.VoteTotal, j.MyVotes, j.Starred, j.Scheduled = totals[n.ID], mine[n.ID], stars[n.ID], scheduled[n.ID]
+		j.VoteTotal, j.Voted, j.Starred, j.Scheduled = totals[n.ID], mine[n.ID], stars[n.ID], scheduled[n.ID]
 		s.Notes = append(s.Notes, j)
 	}
 	// Count every dot, including any on notes hidden from this user.

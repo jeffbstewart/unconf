@@ -12,7 +12,7 @@ const note = (id: string, over: Partial<Note> = {}): Note => ({
   color: 'yellow',
   regionId: null,
   voteTotal: 0,
-  myVotes: 0,
+  voted: false,
   starred: false,
   links: [],
   scheduled: false,
@@ -33,7 +33,7 @@ describe('matches', () => {
     const mine = note('a', { authorId: 'me' });
     expect(matches(mine, f({ mine: true }), 'me')).toBe(true);
     expect(matches(note('b'), f({ mine: true }), 'me')).toBe(false);
-    expect(matches(note('c', { myVotes: 2 }), f({ myVotes: true }), 'me')).toBe(true);
+    expect(matches(note('c', { voted: true }), f({ myVotes: true }), 'me')).toBe(true);
     expect(matches(note('d'), f({ myVotes: true }), 'me')).toBe(false);
     expect(matches(note('e', { starred: true }), f({ starred: true }), 'me')).toBe(true);
     expect(matches(note('f'), f({ starred: true }), 'me')).toBe(false);

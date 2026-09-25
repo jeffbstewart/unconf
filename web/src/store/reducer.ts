@@ -103,7 +103,7 @@ export function applyEvent(s: BoardState, e: BoardEvent): BoardState {
         messages,
         assignments: s.assignments.filter((a) => a.noteId !== e.noteId),
         // The note's votes were deleted with it, refunding ours.
-        votesUsed: Math.max(0, s.votesUsed - s.notes[e.noteId].myVotes),
+        votesUsed: Math.max(0, s.votesUsed - (s.notes[e.noteId].voted ? 1 : 0)),
       };
     }
     case 'links_set':
@@ -134,11 +134,12 @@ export function applyEvent(s: BoardState, e: BoardEvent): BoardState {
     case 'vote_retracted': {
       const n = s.notes[e.noteId];
       if (!n) return s;
-      const mine = e.byUserId === s.you?.id;
-      const delta = e.kind === 'vote_cast' ? 1 : -1;
+      if (e.byUserId !== s.you?.id) return patchNote(s, e.noteId, { voteTotal: e.total });
+      const voted = e.kind === 'vote_cast';
+      const changed = voted !== n.voted;
       return {
-        ...patchNote(s, e.noteId, { voteTotal: e.total, myVotes: mine ? n.myVotes + delta : n.myVotes }),
-        votesUsed: mine ? s.votesUsed + delta : s.votesUsed,
+        ...patchNote(s, e.noteId, { voteTotal: e.total, voted }),
+        votesUsed: changed ? s.votesUsed + (voted ? 1 : -1) : s.votesUsed,
       };
     }
     case 'voting_set':

@@ -3,10 +3,12 @@ package store
 import (
 	"context"
 	"errors"
+	"io/fs"
 	"testing"
 	"time"
 
 	"github.com/jeffbstewart/unconf/internal/domain"
+	"github.com/jeffbstewart/unconf/internal/store/schema"
 )
 
 func seedUser(t *testing.T, s *Store, eventID, name string) User {
@@ -60,7 +62,10 @@ func TestNoteCRUD(t *testing.T) {
 	}
 
 	// Votes and stars feed facts and snapshot aggregates.
-	s.db.ExecContext(ctx, "INSERT INTO votes (id, user_id, note_id, cast_at) VALUES ('v1', ?, ?, ?), ('v2', ?, ?, ?)", u.ID, n.ID, now, u.ID, n.ID, now)
+	u2 := seedUser(t, s, ev.ID, "Bob")
+	if _, err := s.db.ExecContext(ctx, "INSERT INTO votes (id, user_id, note_id, cast_at) VALUES ('v1', ?, ?, ?), ('v2', ?, ?, ?)", u.ID, n.ID, now, u2.ID, n.ID, now); err != nil {
+		t.Fatal(err)
+	}
 	s.db.ExecContext(ctx, "INSERT INTO stars (user_id, note_id) VALUES (?, ?)", u.ID, n.ID)
 	if f, _ := s.NoteFacts(ctx, got); f.Votes != 2 || f.Assignments != 0 || f.AuthorID != u.ID || f.Hidden {
 		t.Fatalf("facts: %+v", f)
@@ -68,8 +73,8 @@ func TestNoteCRUD(t *testing.T) {
 	if tot, _ := s.VoteTotals(ctx, ev.ID); tot[n.ID] != 2 {
 		t.Fatalf("totals: %v", tot)
 	}
-	if mine, _ := s.UserVotes(ctx, u.ID); mine[n.ID] != 2 {
-		t.Fatalf("user votes: %v", mine)
+	if mine, _ := s.UserVoted(ctx, u.ID); !mine[n.ID] {
+		t.Fatalf("user voted: %v", mine)
 	}
 	if stars, _ := s.UserStars(ctx, u.ID); !stars[n.ID] {
 		t.Fatalf("stars: %v", stars)
@@ -213,35 +218,38 @@ func TestVotes(t *testing.T) {
 	ctx := context.Background()
 	s, _ := openTemp(t)
 	ev, _ := s.EnsureDefaultEvent(ctx, "E")
-	u := seedUser(t, s, ev.ID, "Ada")
-	s.InsertNote(ctx, Note{ID: "n", EventID: ev.ID, AuthorID: u.ID, Title: "T", Color: "yellow", CreatedAt: "t", UpdatedAt: "t"})
-	for i, id := range []string{"v1", "v2", "v3"} {
-		if err := s.CastVote(ctx, id, u.ID, "n", "t"); err != nil {
-			t.Fatal(err)
-		}
-		if n, _ := s.NoteVoteTotal(ctx, "n"); n != i+1 {
-			t.Fatalf("total %d after %d casts", n, i+1)
-		}
+	ada := seedUser(t, s, ev.ID, "Ada")
+	bob := seedUser(t, s, ev.ID, "Bob")
+	s.InsertNote(ctx, Note{ID: "n", EventID: ev.ID, AuthorID: ada.ID, Title: "T", Color: "yellow", CreatedAt: "t", UpdatedAt: "t"})
+
+	if cast, err := s.CastVote(ctx, "v1", ada.ID, "n", "t"); !cast || err != nil {
+		t.Fatal(cast, err)
 	}
-	if used, _ := s.VotesCast(ctx, u.ID); used != 3 {
+	// One vote per person per note: a second one changes nothing.
+	if cast, err := s.CastVote(ctx, "v2", ada.ID, "n", "t"); cast || err != nil {
+		t.Fatalf("second vote by the same user: cast=%v err=%v", cast, err)
+	}
+	s.CastVote(ctx, "v3", bob.ID, "n", "t")
+	if n, _ := s.NoteVoteTotal(ctx, "n"); n != 2 {
+		t.Fatalf("total %d, want 2 voters", n)
+	}
+	if voted, _ := s.HasVoted(ctx, ada.ID, "n"); !voted {
+		t.Fatal("HasVoted")
+	}
+	if m, _ := s.UserVoted(ctx, ada.ID); !m["n"] {
+		t.Fatal("UserVoted")
+	}
+	if used, _ := s.VotesCast(ctx, ada.ID); used != 1 {
 		t.Fatalf("used %d", used)
 	}
-	if ok, err := s.RetractVote(ctx, u.ID, "n"); !ok || err != nil {
+	if ok, err := s.RetractVote(ctx, ada.ID, "n"); !ok || err != nil {
 		t.Fatal(ok, err)
 	}
-	var left []string
-	rows, _ := s.db.QueryContext(ctx, "SELECT id FROM votes ORDER BY rowid")
-	for rows.Next() {
-		var id string
-		rows.Scan(&id)
-		left = append(left, id)
+	if ok, _ := s.RetractVote(ctx, ada.ID, "n"); ok {
+		t.Fatal("retracting twice should report false")
 	}
-	rows.Close()
-	if len(left) != 2 || left[1] != "v2" {
-		t.Fatalf("retract should remove the newest dot: %v", left)
-	}
-	if ok, _ := s.RetractVote(ctx, "someone-else", "n"); ok {
-		t.Fatal("retracting without a vote there should report false")
+	if n, _ := s.NoteVoteTotal(ctx, "n"); n != 1 {
+		t.Fatalf("total %d after retract", n)
 	}
 
 	if err := s.SetVotingOpen(ctx, ev.ID, true); err != nil {
@@ -252,5 +260,30 @@ func TestVotes(t *testing.T) {
 	}
 	if e, _ := s.Event(ctx, ev.ID); !e.VotingOpen || e.VotesPerUser != 9 {
 		t.Fatalf("event: %+v", e)
+	}
+}
+
+func TestSchemaCollapsesStackedVotes(t *testing.T) {
+	// Fragment 007 must dedupe votes left by earlier (stacking) builds.
+	ctx := context.Background()
+	s, _ := openTemp(t)
+	if _, err := s.db.ExecContext(ctx, "DROP INDEX votes_user_note"); err != nil {
+		t.Fatal(err)
+	}
+	ev, _ := s.EnsureDefaultEvent(ctx, "E")
+	u := seedUser(t, s, ev.ID, "Ada")
+	s.InsertNote(ctx, Note{ID: "n", EventID: ev.ID, AuthorID: u.ID, Title: "T", Color: "yellow", CreatedAt: "t", UpdatedAt: "t"})
+	for _, id := range []string{"a", "b", "c"} {
+		s.db.ExecContext(ctx, "INSERT INTO votes (id, user_id, note_id, cast_at) VALUES (?, ?, 'n', 't')", id, u.ID)
+	}
+	frag, err := fs.ReadFile(schema.Fragments, "007_one_vote_per_session.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.db.ExecContext(ctx, string(frag)); err != nil {
+		t.Fatal(err)
+	}
+	if n, _ := s.NoteVoteTotal(ctx, "n"); n != 1 {
+		t.Fatalf("stacked votes not collapsed: %d", n)
 	}
 }

@@ -110,9 +110,14 @@ func (s Queries) VoteTotals(ctx context.Context, eventID string) (map[string]int
 		JOIN notes n ON n.id = v.note_id WHERE n.event_id = ? GROUP BY v.note_id`, eventID)
 }
 
-// UserVotes counts one user's vote dots per note.
-func (s Queries) UserVotes(ctx context.Context, userID string) (map[string]int, error) {
-	return countsByNote(ctx, s.db, "SELECT note_id, COUNT(*) FROM votes WHERE user_id = ? GROUP BY note_id", userID)
+// UserVoted returns the notes a user has voted for.
+func (s Queries) UserVoted(ctx context.Context, userID string) (map[string]bool, error) {
+	counts, err := countsByNote(ctx, s.db, "SELECT note_id, 1 FROM votes WHERE user_id = ?", userID)
+	m := make(map[string]bool, len(counts))
+	for k := range counts {
+		m[k] = true
+	}
+	return m, err
 }
 
 // UserStars returns the notes a user has starred.

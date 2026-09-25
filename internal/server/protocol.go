@@ -35,7 +35,7 @@ type noteJSON struct {
 	Color     string        `json:"color"`
 	RegionID  *string       `json:"regionId"`
 	VoteTotal int           `json:"voteTotal"`
-	MyVotes   int           `json:"myVotes"`
+	Voted     bool          `json:"voted"` // this user voted for it
 	Starred   bool          `json:"starred"`
 	Hidden    bool          `json:"hidden,omitempty"`
 	Links     []domain.Link `json:"links"`

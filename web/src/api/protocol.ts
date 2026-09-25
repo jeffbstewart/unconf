@@ -37,7 +37,8 @@ export interface Note {
   color: NoteColor;
   regionId: string | null;
   voteTotal: number;
-  myVotes: number;
+  /** Whether this user voted for it (one vote per person per note). */
+  voted: boolean;
   starred: boolean;
   hidden?: boolean;
   links: Link[];

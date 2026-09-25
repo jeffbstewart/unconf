@@ -103,7 +103,7 @@ func (s Queries) SetUserEmail(ctx context.Context, id, email string) error {
 	return s.execOne(ctx, "UPDATE users SET email = ? WHERE id = ?", nullIfEmpty(email), id)
 }
 
-// VotesCast counts the vote dots a user has placed.
+// VotesCast counts the votes a user has cast.
 func (s Queries) VotesCast(ctx context.Context, userID string) (int, error) {
 	var n int
 	err := s.db.QueryRowContext(ctx, "SELECT COUNT(*) FROM votes WHERE user_id = ?", userID).Scan(&n)
